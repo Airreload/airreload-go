@@ -1,0 +1,2053 @@
+package com.airreload.airreload;
+
+import android.Manifest;
+import android.animation.ValueAnimator;
+import android.app.ActivityManager;
+import android.app.AlertDialog;
+import android.app.Dialog;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
+import android.content.ActivityNotFoundException;
+import android.content.Context;
+import android.content.Intent;
+import android.content.res.Configuration;
+import android.content.res.ColorStateList;
+import android.content.pm.ApplicationInfo;
+import android.content.pm.PackageManager;
+import android.graphics.Canvas;
+import android.graphics.Color;
+import android.graphics.Paint;
+import android.graphics.Path;
+import android.graphics.Typeface;
+import android.graphics.drawable.ColorDrawable;
+import android.graphics.drawable.Drawable;
+import android.graphics.drawable.GradientDrawable;
+import android.net.Uri;
+import android.os.Build;
+import android.os.Bundle;
+import android.provider.Settings;
+import android.text.Editable;
+import android.text.InputType;
+import android.text.TextWatcher;
+import android.transition.AutoTransition;
+import android.transition.TransitionManager;
+import android.view.Gravity;
+import android.view.View;
+import android.view.ViewGroup;
+import android.view.Window;
+import android.view.WindowManager;
+import android.view.inputmethod.EditorInfo;
+import android.view.inputmethod.InputMethodManager;
+import android.view.animation.PathInterpolator;
+import android.widget.Button;
+import android.widget.EditText;
+import android.widget.FrameLayout;
+import android.widget.ImageView;
+import android.widget.LinearLayout;
+import android.widget.ProgressBar;
+import android.widget.ScrollView;
+import android.widget.TextView;
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.contract.ActivityResultContracts;
+import androidx.activity.OnBackPressedCallback;
+import androidx.appcompat.app.AppCompatDelegate;
+import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.content.ContextCompat;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowCompat;
+import androidx.core.view.WindowInsetsCompat;
+import androidx.lifecycle.ViewModelProvider;
+import com.journeyapps.barcodescanner.ScanContract;
+import com.journeyapps.barcodescanner.ScanOptions;
+import com.airreload.shared.history.DownloadOutcomes;
+import com.airreload.shared.history.DownloadRecord;
+import com.google.android.material.bottomnavigation.BottomNavigationView;
+import com.google.android.material.bottomsheet.BottomSheetBehavior;
+import com.google.android.material.bottomsheet.BottomSheetDialog;
+import com.google.android.material.shape.MaterialShapeDrawable;
+import java.text.DateFormat;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
+
+public final class MainActivity extends AppCompatActivity {
+  private static final String THEME_SYSTEM = "system";
+  private static final String THEME_LIGHT = "light";
+  private static final String THEME_DARK = "dark";
+
+  private int CREAM;
+  private int SURFACE;
+  private int FOREST;
+  private int GREEN;
+  private int MINT;
+  private int PALE_MINT;
+  private int LIME;
+  private int MUTED;
+  private int BORDER;
+  private int ERROR;
+  private int ERROR_BG;
+
+  private LinearLayout library;
+  private FrameLayout pageHost;
+  private View appContent;
+  private BottomNavigationView bottomNavigation;
+  private static final int HOME_TAB = 1001;
+  private static final int SETTINGS_TAB = 1002;
+  private final AppRouter router = new AppRouter();
+  private final PageTransitions pageTransitions = new PageTransitions();
+  private final Map<AppRouter.Route, Integer> scrollPositions = new HashMap<>();
+  private ScrollView currentScroll;
+  private boolean applyingTheme;
+  private View themeOverlay;
+  private BottomSheetDialog activeSheet;
+  private TextView libraryCount;
+  private LinearLayout historyList;
+  private LinearLayout historySelectionBar;
+  private TextView historySummary;
+  private TextView historySelectionCount;
+  private TextView historySelectAction;
+  private final Set<String> selectedHistory = new HashSet<>();
+  private OnBackPressedCallback historyBack;
+  private boolean historyPage;
+  private boolean historySelectionMode;
+  private EditText search;
+  private Button scanButton;
+  private Button urlSubmit;
+  private boolean urlExpanded;
+  private String urlDraft = "";
+  private AppStateViewModel appState;
+  private AppUiState currentState = new AppUiState("idle", "", -1);
+  private String lastTerminalState = "";
+  private boolean foreground;
+  private boolean onboardingVisible;
+  private String query = "";
+
+  private ActivityResultLauncher<ScanOptions> scanner;
+  private ActivityResultLauncher<String> cameraPermission;
+  private ActivityResultLauncher<Intent> sourceSettings;
+  private ActivityResultLauncher<String> notificationPermission;
+
+  @Override
+  protected void onCreate(Bundle savedInstanceState) {
+    applyThemePreference();
+    super.onCreate(savedInstanceState);
+    configurePalette();
+    WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
+    configureSystemBars();
+    configureLaunchers();
+    if (savedInstanceState != null) {
+      router.restore(savedInstanceState.getString("route"));
+      query = savedInstanceState.getString("query", "");
+      urlExpanded = savedInstanceState.getBoolean("url_expanded", false);
+      urlDraft = savedInstanceState.getString("url_draft", "");
+      for (AppRouter.Route route : AppRouter.Route.values()) {
+        scrollPositions.put(route, savedInstanceState.getInt("scroll_" + route, 0));
+      }
+    }
+    buildUi();
+    historyBack =
+        new OnBackPressedCallback(false) {
+          @Override
+          public void handleOnBackPressed() {
+            if (historySelectionMode) {
+              setHistorySelectionMode(false);
+            } else {
+              router.back();
+            }
+          }
+    };
+    getOnBackPressedDispatcher().addCallback(this, historyBack);
+    historyBack.setEnabled(router.canGoBack());
+    router.setListener((previous, current, back) -> renderRoute(previous, back, true));
+    appState = new ViewModelProvider(this).get(AppStateViewModel.class);
+    appState.state().observe(this, this::renderState);
+  }
+
+  private void applyThemePreference() {
+    String mode = State.prefs(this).getString("theme_mode", THEME_SYSTEM);
+    int nightMode;
+    if (THEME_LIGHT.equals(mode)) {
+      nightMode = AppCompatDelegate.MODE_NIGHT_NO;
+    } else if (THEME_DARK.equals(mode)) {
+      nightMode = AppCompatDelegate.MODE_NIGHT_YES;
+    } else {
+      nightMode = AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM;
+    }
+    getDelegate().setLocalNightMode(nightMode);
+  }
+
+  private void configurePalette() {
+    String mode = State.prefs(this).getString("theme_mode", THEME_SYSTEM);
+    boolean systemDark =
+        (getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK)
+            == Configuration.UI_MODE_NIGHT_YES;
+    boolean dark = THEME_DARK.equals(mode) || (THEME_SYSTEM.equals(mode) && systemDark);
+    if (dark) {
+      CREAM = Color.rgb(4, 5, 6);
+      SURFACE = Color.rgb(23, 28, 34);
+      FOREST = Color.rgb(231, 234, 239);
+      GREEN = Color.rgb(112, 199, 250);
+      MINT = Color.rgb(205, 213, 223);
+      PALE_MINT = Color.rgb(18, 47, 68);
+      LIME = Color.rgb(112, 199, 250);
+      MUTED = Color.rgb(153, 161, 173);
+      BORDER = Color.rgb(61, 70, 82);
+      ERROR = Color.rgb(255, 142, 136);
+      ERROR_BG = Color.rgb(48, 25, 28);
+    } else {
+      CREAM = Color.rgb(247, 248, 251);
+      SURFACE = Color.WHITE;
+      FOREST = Color.rgb(24, 27, 33);
+      GREEN = Color.rgb(4, 104, 215);
+      MINT = Color.rgb(91, 99, 112);
+      PALE_MINT = Color.rgb(229, 243, 255);
+      LIME = Color.rgb(84, 197, 248);
+      MUTED = Color.rgb(101, 109, 121);
+      BORDER = Color.rgb(218, 222, 230);
+      ERROR = Color.rgb(180, 48, 48);
+      ERROR_BG = Color.rgb(255, 239, 239);
+    }
+  }
+
+  private void configureSystemBars() {
+    boolean light = Color.red(CREAM) > 128;
+    getWindow().setStatusBarColor(CREAM);
+    getWindow().setNavigationBarColor(CREAM);
+    WindowCompat.getInsetsController(getWindow(), getWindow().getDecorView())
+        .setAppearanceLightStatusBars(light);
+    WindowCompat.getInsetsController(getWindow(), getWindow().getDecorView())
+        .setAppearanceLightNavigationBars(light);
+  }
+
+  private void setThemeMode(String mode) {
+    if (mode.equals(State.prefs(this).getString("theme_mode", THEME_SYSTEM))) {
+      return;
+    }
+    State.prefs(this).edit().putString("theme_mode", mode).apply();
+    applyingTheme = true;
+    applyThemePreference();
+    applyingTheme = false;
+    rebuildTheme();
+  }
+
+  @Override
+  public void onConfigurationChanged(Configuration configuration) {
+    super.onConfigurationChanged(configuration);
+    if (!applyingTheme && pageHost != null) rebuildTheme();
+  }
+
+  private void rebuildTheme() {
+    pageTransitions.finish();
+    finishThemeTransition();
+    if (activeSheet != null) activeSheet.dismiss();
+    if (currentScroll != null) scrollPositions.put(router.current(), currentScroll.getScrollY());
+    View previous = appContent;
+    configurePalette();
+    configureSystemBars();
+    buildUi();
+    if (!ValueAnimator.areAnimatorsEnabled() || previous == null) return;
+    FrameLayout stage = (FrameLayout) appContent;
+    themeOverlay = previous;
+    previous.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS);
+    // Block touches on the fading page while keeping its already-rendered colors intact.
+    ((ViewGroup) previous).setDescendantFocusability(ViewGroup.FOCUS_BLOCK_DESCENDANTS);
+    View touchGuard = new View(this);
+    touchGuard.setClickable(true);
+    ((FrameLayout) previous).addView(touchGuard, new FrameLayout.LayoutParams(-1, -1));
+    stage.addView(previous, new FrameLayout.LayoutParams(-1, -1));
+    previous.animate().alpha(0f).setDuration(320)
+        .setInterpolator(new PathInterpolator(.2f, 0f, 0f, 1f))
+        .withEndAction(this::finishThemeTransition).start();
+  }
+
+  private void finishThemeTransition() {
+    if (themeOverlay == null) return;
+    View overlay = themeOverlay;
+    themeOverlay = null;
+    overlay.animate().withEndAction(null);
+    overlay.animate().cancel();
+    if (overlay.getParent() instanceof ViewGroup) ((ViewGroup) overlay.getParent()).removeView(overlay);
+  }
+
+  @Override
+  protected void onSaveInstanceState(Bundle state) {
+    super.onSaveInstanceState(state);
+    state.putString("route", router.save());
+    state.putString("query", query);
+    state.putBoolean("url_expanded", urlExpanded);
+    state.putString("url_draft", urlDraft);
+    if (currentScroll != null) scrollPositions.put(router.current(), currentScroll.getScrollY());
+    for (Map.Entry<AppRouter.Route, Integer> entry : scrollPositions.entrySet()) {
+      state.putInt("scroll_" + entry.getKey(), entry.getValue());
+    }
+  }
+
+  @Override
+  protected void onDestroy() {
+    router.setListener(null);
+    pageTransitions.finish();
+    finishThemeTransition();
+    if (activeSheet != null) {
+      activeSheet.setOnDismissListener(null);
+      activeSheet.dismiss();
+    }
+    super.onDestroy();
+  }
+
+  private void configureLaunchers() {
+    scanner =
+        registerForActivityResult(
+            new ScanContract(),
+            result -> {
+              if (result.getContents() != null) {
+                acceptLink(result.getContents());
+              }
+            });
+    cameraPermission =
+        registerForActivityResult(
+            new ActivityResultContracts.RequestPermission(),
+            granted -> {
+              if (granted) {
+                openCamera();
+              } else {
+                showMessage(
+                    "Camera access is off",
+                    "Allow camera access in Android Settings to scan a QR code.");
+              }
+            });
+    sourceSettings =
+        registerForActivityResult(
+            new ActivityResultContracts.StartActivityForResult(),
+            result -> {
+              boolean granted = getPackageManager().canRequestPackageInstalls();
+              State.prefs(this).edit().putBoolean("onboarding_seen", true).apply();
+              if (granted) {
+                String queued = State.prefs(this).getString("queued_url", null);
+                if (queued == null) {
+                  State.update(
+                      this,
+                      "idle",
+                      "All set. Scan an APK QR code whenever you’re ready.",
+                      0);
+                }
+                maybeAskNotificationsAndContinue();
+              } else if (State.prefs(this).getString("queued_url", null) != null) {
+                State.update(
+                    this,
+                    "permission_needed",
+                    "Allow from this source is still off. Your scanned link is saved safely.",
+                    0);
+              } else {
+                State.update(
+                    this,
+                    "idle",
+                    "Install permission is still off. Airreload Go will ask again when you scan.",
+                    0);
+              }
+              refreshStatus();
+            });
+    notificationPermission =
+        registerForActivityResult(
+            new ActivityResultContracts.RequestPermission(), granted -> continueQueuedDownload());
+  }
+
+  @Override
+  protected void onResume() {
+    super.onResume();
+    foreground = true;
+    recoverInterruptedFlow();
+    if (appState != null) {
+      appState.refreshNow();
+    }
+    maybeAskNotificationsAndContinue();
+    showPendingInstall(false);
+    State.prefs(this).edit().remove("pending_launch").apply();
+  }
+
+  @Override
+  protected void onPause() {
+    foreground = false;
+    super.onPause();
+  }
+
+  @Override
+  protected void onNewIntent(Intent intent) {
+    super.onNewIntent(intent);
+    setIntent(intent);
+    pageHost.post(() -> showPendingInstall(true));
+  }
+
+  private void recoverInterruptedFlow() {
+    if (!State.busy(this)) {
+      return;
+    }
+    int sessionId = State.prefs(this).getInt("session", -1);
+    boolean serviceAlive = false;
+    ActivityManager manager = getSystemService(ActivityManager.class);
+    for (ActivityManager.RunningServiceInfo service : manager.getRunningServices(Integer.MAX_VALUE)) {
+      if (InstallService.class.getName().equals(service.service.getClassName())) {
+        serviceAlive = true;
+        break;
+      }
+    }
+    boolean sessionAlive =
+        sessionId >= 0
+            && getPackageManager().getPackageInstaller().getSessionInfo(sessionId) != null;
+    if (!serviceAlive && !sessionAlive) {
+      Installer.cancel(this);
+      State.update(
+          this,
+          "error",
+          "The previous install expired or was interrupted. Scan the code to start fresh.",
+          0);
+    }
+  }
+
+  private void buildUi() {
+    FrameLayout stage = new FrameLayout(this);
+    appContent = stage;
+    stage.setBackgroundColor(CREAM);
+    LinearLayout shell = column();
+    stage.addView(
+        shell,
+        new FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
+    pageHost = new FrameLayout(this);
+    shell.addView(
+        pageHost,
+        new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
+    bottomNavigation = buildBottomNavigation();
+    shell.addView(bottomNavigation);
+
+    ViewCompat.setOnApplyWindowInsetsListener(
+        stage,
+        (view, insets) -> {
+          androidx.core.graphics.Insets bars = insets.getInsets(WindowInsetsCompat.Type.systemBars());
+          int keyboard = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom;
+          shell.setPadding(bars.left, bars.top, bars.right, Math.max(bars.bottom, keyboard));
+          if (bottomNavigation != null) {
+            bottomNavigation.setVisibility(keyboard > 0 || historyPage ? View.GONE : View.VISIBLE);
+          }
+          return insets;
+        });
+    setContentView(stage);
+    renderRoute(null, false, false);
+  }
+
+  private BottomNavigationView buildBottomNavigation() {
+    BottomNavigationView navigation = new BottomNavigationView(this);
+    navigation.setBackgroundColor(CREAM);
+    navigation.setElevation(0f);
+    // The shell already owns the system bar insets.
+    ViewCompat.setOnApplyWindowInsetsListener(navigation, (view, insets) -> insets);
+    navigation.setItemHorizontalTranslationEnabled(false);
+    navigation.setItemIconSize(dp(24));
+    navigation.setItemActiveIndicatorColor(ColorStateList.valueOf(PALE_MINT));
+    navigation.setItemActiveIndicatorWidth(dp(64));
+    navigation.setItemActiveIndicatorHeight(dp(32));
+    ColorStateList tint = new ColorStateList(
+        new int[][] {new int[] {android.R.attr.state_checked}, new int[] {}},
+        new int[] {GREEN, MUTED});
+    navigation.setItemIconTintList(tint);
+    navigation.setItemTextColor(tint);
+    navigation.getMenu().add(0, HOME_TAB, 0, "Home").setIcon(R.drawable.ic_home);
+    navigation.getMenu().add(0, SETTINGS_TAB, 1, "Settings").setIcon(R.drawable.ic_settings);
+    navigation.setOnItemSelectedListener(item -> {
+      router.navigate(item.getItemId() == HOME_TAB ? AppRouter.Route.HOME : AppRouter.Route.SETTINGS);
+      return true;
+    });
+    navigation.setOnItemReselectedListener(item -> {
+      if (currentScroll != null) currentScroll.smoothScrollTo(0, 0);
+    });
+    navigation.setLayoutParams(new LinearLayout.LayoutParams(-1, dp(80)));
+    return navigation;
+  }
+
+  private void selectTab(boolean home) {
+    bottomNavigation.getMenu().findItem(home ? HOME_TAB : SETTINGS_TAB).setChecked(true);
+  }
+
+  private void renderRoute(AppRouter.Route previousRoute, boolean back, boolean animate) {
+    pageTransitions.finish();
+    if (previousRoute != null && currentScroll != null) {
+      scrollPositions.put(previousRoute, currentScroll.getScrollY());
+    }
+    View previous = pageHost.getChildCount() == 0 ? null : pageHost.getChildAt(0);
+    library = null;
+    search = null;
+    scanButton = null;
+    urlSubmit = null;
+    historyList = null;
+    switch (router.current()) {
+      case HOME: showHomePage(); break;
+      case SETTINGS: showSettingsPage(); break;
+      case HISTORY: showHistoryPage(); break;
+    }
+    if (historyBack != null) historyBack.setEnabled(router.canGoBack());
+    ScrollView scroll = currentScroll;
+    int scrollY = scrollPositions.getOrDefault(router.current(), 0);
+    scroll.post(() -> scroll.scrollTo(0, scrollY));
+    if (animate) pageTransitions.play(pageHost, previous, pageHost.getChildAt(0), back);
+  }
+
+  private void showHomePage() {
+    if (pageHost == null) {
+      return;
+    }
+    historyPage = false;
+    historySelectionMode = false;
+    selectedHistory.clear();
+    historyList = null;
+    if (historyBack != null) {
+      historyBack.setEnabled(false);
+    }
+    bottomNavigation.setVisibility(View.VISIBLE);
+    selectTab(true);
+    pageHost.removeAllViews();
+    LinearLayout page = column();
+    page.setBackgroundColor(CREAM);
+    pageHost.addView(
+        page,
+        new FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
+    MaxWidthColumn stickyHeader = new MaxWidthColumn(this);
+    stickyHeader.setOrientation(LinearLayout.VERTICAL);
+    stickyHeader.setPadding(dp(24), dp(14), dp(24), dp(14));
+    stickyHeader.setBackgroundColor(CREAM);
+    stickyHeader.addView(buildCompactHeader());
+    page.addView(
+        stickyHeader,
+        new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+    ScrollView scroll = new ScrollView(this);
+    currentScroll = scroll;
+    scroll.setFillViewport(true);
+    scroll.setClipToPadding(false);
+    MaxWidthColumn root = new MaxWidthColumn(this);
+    root.setOrientation(LinearLayout.VERTICAL);
+    root.setPadding(dp(24), dp(20), dp(24), dp(30));
+    scroll.addView(
+        root,
+        new ScrollView.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+    page.addView(
+        scroll,
+        new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
+
+    root.addView(buildActionCard());
+    root.addView(space(30));
+    root.addView(buildLibraryHeader());
+    root.addView(space(12));
+    root.addView(buildSearch());
+    root.addView(space(12));
+    library = column();
+    root.addView(library);
+    refreshLibrary();
+  }
+
+  private View buildCompactHeader() {
+    LinearLayout header = row();
+    header.setGravity(Gravity.CENTER_VERTICAL);
+    TextView name = text("Airreload Go", 23, FOREST, true);
+    LinearLayout.LayoutParams nameParams =
+        new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1);
+    header.addView(name, nameParams);
+    TextView history = text("HISTORY", 11, MUTED, true);
+    history.setLetterSpacing(.08f);
+    history.setGravity(Gravity.CENTER);
+    history.setContentDescription("Open download history");
+    history.setFocusable(true);
+    history.setBackground(outline(SURFACE, BORDER, 10));
+    history.setOnClickListener(view -> router.navigate(AppRouter.Route.HISTORY));
+    header.addView(history, new LinearLayout.LayoutParams(dp(82), dp(40)));
+    return header;
+  }
+
+  private View buildActionCard() {
+    LinearLayout card = column();
+    card.setBackground(outline(SURFACE, BORDER, 15));
+    Button manual = actionButton("Enter URL manually", R.drawable.ic_link);
+    card.addView(manual, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(60)));
+    LinearLayout form = buildInlineUrlForm();
+    form.setVisibility(urlExpanded ? View.VISIBLE : View.GONE);
+    card.addView(form);
+    updateUrlDisclosure(manual);
+    manual.setOnClickListener(view -> {
+      if (ValueAnimator.areAnimatorsEnabled() && card.getParent() instanceof ViewGroup) {
+        AutoTransition transition = new AutoTransition();
+        transition.setDuration(220);
+        transition.setInterpolator(new PathInterpolator(.2f, 0f, 0f, 1f));
+        TransitionManager.beginDelayedTransition((ViewGroup) card.getParent(), transition);
+      }
+      urlExpanded = !urlExpanded;
+      form.setVisibility(urlExpanded ? View.VISIBLE : View.GONE);
+      updateUrlDisclosure(manual);
+      if (!urlExpanded) {
+        form.clearFocus();
+        getSystemService(InputMethodManager.class).hideSoftInputFromWindow(form.getWindowToken(), 0);
+      }
+    });
+    card.addView(divider());
+
+    scanButton = actionButton("Scan QR code", R.drawable.ic_qr_code);
+    scanButton.setOnClickListener(view -> requestCameraAndScan());
+    card.addView(scanButton, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(60)));
+    return card;
+  }
+
+  private void updateUrlDisclosure(Button manual) {
+    Drawable chevron = ContextCompat.getDrawable(this,
+        urlExpanded ? R.drawable.ic_chevron_up : R.drawable.ic_chevron_down).mutate();
+    chevron.setTint(MUTED);
+    chevron.setBounds(0, 0, dp(20), dp(20));
+    Drawable link = manual.getCompoundDrawablesRelative()[0];
+    manual.setCompoundDrawablesRelative(link, null, chevron, null);
+    ViewCompat.setStateDescription(manual, urlExpanded ? "Expanded" : "Collapsed");
+  }
+
+  private Button actionButton(String label, int iconResource) {
+    Button action = button(label, Color.TRANSPARENT, FOREST);
+    action.setGravity(Gravity.CENTER_VERTICAL);
+    action.setPadding(dp(20), 0, dp(20), 0);
+    action.setBackgroundColor(Color.TRANSPARENT);
+    Drawable icon = ContextCompat.getDrawable(this, iconResource).mutate();
+    icon.setTint(GREEN);
+    icon.setBounds(0, 0, dp(24), dp(24));
+    action.setCompoundDrawablesRelative(icon, null, null, null);
+    action.setCompoundDrawablePadding(dp(14));
+    return action;
+  }
+
+  private View divider() {
+    View divider = new View(this);
+    divider.setBackgroundColor(BORDER);
+    divider.setLayoutParams(
+        new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1)));
+    return divider;
+  }
+
+  private void requestCameraAndScan() {
+    if (!ready()) {
+      return;
+    }
+    if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
+        == PackageManager.PERMISSION_GRANTED) {
+      openCamera();
+    } else {
+      cameraPermission.launch(Manifest.permission.CAMERA);
+    }
+  }
+
+  private LinearLayout buildInlineUrlForm() {
+    LinearLayout content = column();
+    content.setPadding(dp(20), dp(4), dp(20), dp(20));
+    EditText input = new EditText(this);
+    input.setSingleLine(true);
+    input.setHint("https://example.com/app.apk");
+    input.setContentDescription("App download URL");
+    input.setText(urlDraft);
+    input.setTextSize(16);
+    input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
+    input.setImeOptions(EditorInfo.IME_ACTION_GO);
+    input.setTextColor(FOREST);
+    input.setHintTextColor(MUTED);
+    input.setPadding(dp(18), dp(16), dp(18), dp(16));
+    input.setBackground(outline(CREAM, BORDER, 16));
+    input.setOnFocusChangeListener((view, focused) ->
+        view.setBackground(outline(CREAM, focused ? GREEN : BORDER, 16)));
+    content.addView(input, new LinearLayout.LayoutParams(-1, dp(60)));
+    TextView error = text("", 13, ERROR, false);
+    error.setPadding(0, dp(8), 0, 0);
+    error.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
+    error.setVisibility(View.GONE);
+    content.addView(error);
+    input.addTextChangedListener(new TextWatcher() {
+      @Override public void beforeTextChanged(CharSequence value, int start, int count, int after) {}
+      @Override public void onTextChanged(CharSequence value, int start, int before, int count) {
+        urlDraft = value.toString();
+        error.setVisibility(View.GONE);
+        input.setBackground(outline(CREAM, input.hasFocus() ? GREEN : BORDER, 16));
+      }
+      @Override public void afterTextChanged(Editable value) {}
+    });
+    content.addView(space(14));
+    Button submit = button("Download app", GREEN, Color.red(CREAM) > 128 ? Color.WHITE : CREAM);
+    urlSubmit = submit;
+    submit.setEnabled(!currentState.busy);
+    submit.setAlpha(currentState.busy ? .48f : 1f);
+    content.addView(submit, new LinearLayout.LayoutParams(-1, dp(56)));
+    Runnable download = () -> {
+      if (!ready()) return;
+      String link = input.getText().toString().trim();
+      try {
+        if (link.isEmpty()) throw new IllegalArgumentException("Enter an app URL.");
+        ApkUrl.parse(link);
+      } catch (IllegalArgumentException invalid) {
+        error.setText(link.isEmpty() ? "Enter an app URL." : "Enter a valid HTTP or HTTPS app URL.");
+        error.setVisibility(View.VISIBLE);
+        input.setBackground(outline(CREAM, ERROR, 16));
+        return;
+      }
+      getSystemService(InputMethodManager.class).hideSoftInputFromWindow(input.getWindowToken(), 0);
+      input.clearFocus();
+      acceptLink(link);
+    };
+    submit.setOnClickListener(view -> download.run());
+    input.setOnEditorActionListener((view, actionId, event) -> {
+      if (actionId != EditorInfo.IME_ACTION_GO) return false;
+      download.run();
+      return true;
+    });
+    return content;
+  }
+
+  private LinearLayout sheetContent(BottomSheetDialog sheet, String title) {
+    LinearLayout content = column();
+    content.setPadding(dp(24), dp(12), dp(24), dp(24));
+    View handle = new View(this);
+    handle.setBackground(round(BORDER, 4));
+    handle.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+    LinearLayout.LayoutParams handleParams = new LinearLayout.LayoutParams(dp(32), dp(4));
+    handleParams.gravity = Gravity.CENTER_HORIZONTAL;
+    handleParams.bottomMargin = dp(20);
+    content.addView(handle, handleParams);
+    LinearLayout header = row();
+    header.setGravity(Gravity.CENTER_VERTICAL);
+    TextView heading = text(title, 24, FOREST, true);
+    ViewCompat.setAccessibilityHeading(heading, true);
+    header.addView(heading, new LinearLayout.LayoutParams(0, -2, 1));
+    TextView close = text("×", 26, MUTED, false);
+    close.setGravity(Gravity.CENTER);
+    close.setContentDescription("Close " + title);
+    close.setFocusable(true);
+    close.setBackground(round(CREAM, 24));
+    close.setOnClickListener(view -> sheet.dismiss());
+    header.addView(close, new LinearLayout.LayoutParams(dp(48), dp(48)));
+    content.addView(header);
+    sheet.setTitle(title);
+    return content;
+  }
+
+  private void showSheet(BottomSheetDialog sheet, LinearLayout content) {
+    if (activeSheet != null) activeSheet.dismiss();
+    activeSheet = sheet;
+    ScrollView scroll = new ScrollView(this);
+    scroll.setFillViewport(false);
+    scroll.addView(content);
+    sheet.setContentView(scroll);
+    sheet.setDismissWithAnimation(ValueAnimator.areAnimatorsEnabled());
+    sheet.getBehavior().setSkipCollapsed(true);
+    sheet.getBehavior().setMaxWidth(dp(640));
+    sheet.setOnDismissListener(dialog -> { if (activeSheet == sheet) activeSheet = null; });
+    sheet.setOnShowListener(dialog -> {
+      FrameLayout surface = sheet.findViewById(com.google.android.material.R.id.design_bottom_sheet);
+      if (surface != null) {
+        Drawable background = surface.getBackground();
+        if (background instanceof MaterialShapeDrawable) {
+          ((MaterialShapeDrawable) background).setFillColor(ColorStateList.valueOf(SURFACE));
+        }
+      }
+      sheet.getBehavior().setState(BottomSheetBehavior.STATE_EXPANDED);
+    });
+    Window window = sheet.getWindow();
+    if (window != null) {
+      window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
+      WindowCompat.setDecorFitsSystemWindows(window, false);
+    }
+    ViewCompat.setOnApplyWindowInsetsListener(content, (view, insets) -> {
+      androidx.core.graphics.Insets bars = insets.getInsets(WindowInsetsCompat.Type.systemBars());
+      int keyboard = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom;
+      view.setPadding(dp(24) + bars.left, dp(12), dp(24) + bars.right,
+          dp(24) + Math.max(bars.bottom, keyboard));
+      return insets;
+    });
+    sheet.show();
+  }
+
+  private String themeLabel(String mode) {
+    return THEME_LIGHT.equals(mode) ? "Light" : THEME_DARK.equals(mode) ? "Dark" : "System";
+  }
+
+  private void showThemeSheet() {
+    BottomSheetDialog sheet = new BottomSheetDialog(this);
+    LinearLayout content = sheetContent(sheet, "Appearance");
+    content.addView(space(16));
+    String selected = State.prefs(this).getString("theme_mode", THEME_SYSTEM);
+    for (String mode : new String[] {THEME_SYSTEM, THEME_LIGHT, THEME_DARK}) {
+      boolean checked = mode.equals(selected);
+      LinearLayout option = row();
+      option.setGravity(Gravity.CENTER_VERTICAL);
+      option.setPadding(dp(18), dp(12), dp(18), dp(12));
+      option.setBackground(round(checked ? PALE_MINT : CREAM, 18));
+      LinearLayout labels = column();
+      labels.addView(text(themeLabel(mode), 16, FOREST, true));
+      if (THEME_SYSTEM.equals(mode)) {
+        labels.addView(space(3));
+        labels.addView(text("Match your device", 13, MUTED, false));
+      }
+      option.addView(labels, new LinearLayout.LayoutParams(0, -2, 1));
+      android.widget.RadioButton radio = new android.widget.RadioButton(this);
+      radio.setChecked(checked);
+      radio.setButtonTintList(ColorStateList.valueOf(checked ? GREEN : MUTED));
+      radio.setClickable(false);
+      radio.setFocusable(false);
+      radio.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+      option.addView(radio, new LinearLayout.LayoutParams(dp(40), dp(40)));
+      option.setFocusable(true);
+      option.setContentDescription(themeLabel(mode) + (checked ? ", selected" : ""));
+      option.setOnClickListener(view -> {
+        sheet.setOnDismissListener(dialog -> {
+          activeSheet = null;
+          if (!isFinishing() && !isDestroyed()) setThemeMode(mode);
+        });
+        sheet.dismiss();
+      });
+      LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, -2);
+      params.bottomMargin = dp(10);
+      content.addView(option, params);
+    }
+    showSheet(sheet, content);
+  }
+
+  private void showSettingsPage() {
+    historyPage = false;
+    historySelectionMode = false;
+    selectedHistory.clear();
+    historyList = null;
+    if (historyBack != null) {
+      historyBack.setEnabled(false);
+    }
+    bottomNavigation.setVisibility(View.VISIBLE);
+    selectTab(false);
+    pageHost.removeAllViews();
+    ScrollView scroll = new ScrollView(this);
+    currentScroll = scroll;
+    scroll.setFillViewport(true);
+    MaxWidthColumn root = new MaxWidthColumn(this);
+    root.setOrientation(LinearLayout.VERTICAL);
+    root.setPadding(dp(24), dp(24), dp(24), dp(32));
+    scroll.addView(
+        root,
+        new ScrollView.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+    pageHost.addView(
+        scroll,
+        new FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
+    root.addView(text("Settings", 30, FOREST, true));
+    root.addView(space(38));
+    root.addView(text("Appearance", 14, MUTED, true));
+    root.addView(space(12));
+    LinearLayout appearance = column();
+    appearance.setBackground(outline(SURFACE, BORDER, 15));
+    String themeMode = State.prefs(this).getString("theme_mode", THEME_SYSTEM);
+    appearance.addView(settingsRow("", "Theme", themeLabel(themeMode), view -> showThemeSheet()));
+    root.addView(appearance);
+    root.addView(space(34));
+    root.addView(text("Permissions", 14, MUTED, true));
+    root.addView(space(12));
+    LinearLayout permissions = column();
+    permissions.setBackground(outline(SURFACE, BORDER, 15));
+    permissions.addView(
+        settingsRow("↓", "Install unknown apps", "Open Android settings", view -> openInstallSettings()));
+    root.addView(permissions);
+    root.addView(space(34));
+    root.addView(text("App info", 14, MUTED, true));
+    root.addView(space(12));
+    LinearLayout info = column();
+    info.setBackground(outline(SURFACE, BORDER, 15));
+    info.addView(settingsRow("", "Version", "1.0.1", null));
+    info.addView(divider());
+    info.addView(settingsRow("", "Supported Android", "8.0+", null));
+    root.addView(info);
+  }
+
+  private void showHistoryPage() {
+    historyPage = true;
+    historySelectionMode = false;
+    selectedHistory.clear();
+    library = null;
+    bottomNavigation.setVisibility(View.GONE);
+    selectTab(true);
+    if (historyBack != null) {
+      historyBack.setEnabled(true);
+    }
+    pageHost.removeAllViews();
+    ScrollView scroll = new ScrollView(this);
+    currentScroll = scroll;
+    scroll.setFillViewport(true);
+    scroll.setClipToPadding(false);
+    MaxWidthColumn root = new MaxWidthColumn(this);
+    root.setOrientation(LinearLayout.VERTICAL);
+    root.setPadding(dp(24), dp(18), dp(24), dp(32));
+    scroll.addView(
+        root,
+        new ScrollView.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+    pageHost.addView(
+        scroll,
+        new FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
+    LinearLayout header = row();
+    header.setGravity(Gravity.CENTER_VERTICAL);
+    TextView back = text("‹", 34, FOREST, false);
+    back.setGravity(Gravity.CENTER);
+    back.setContentDescription("Back to home");
+    back.setFocusable(true);
+    back.setBackground(outline(SURFACE, BORDER, 12));
+    back.setOnClickListener(view -> router.back());
+    header.addView(back, new LinearLayout.LayoutParams(dp(48), dp(48)));
+    TextView title = text("Download history", 24, FOREST, true);
+    LinearLayout.LayoutParams titleParams =
+        new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1);
+    titleParams.setMarginStart(dp(14));
+    header.addView(title, titleParams);
+    historySelectAction = text("SELECT", 11, GREEN, true);
+    historySelectAction.setLetterSpacing(.08f);
+    historySelectAction.setGravity(Gravity.CENTER);
+    historySelectAction.setFocusable(true);
+    historySelectAction.setBackground(outline(SURFACE, BORDER, 10));
+    historySelectAction.setOnClickListener(view -> setHistorySelectionMode(!historySelectionMode));
+    header.addView(historySelectAction, new LinearLayout.LayoutParams(dp(76), dp(42)));
+    root.addView(header);
+    root.addView(space(18));
+
+    historySummary = text("", 14, MUTED, false);
+    historySummary.setLineSpacing(dp(3), 1f);
+    root.addView(historySummary);
+    root.addView(space(18));
+    historySelectionBar = buildHistorySelectionBar();
+    root.addView(historySelectionBar);
+    historyList = column();
+    root.addView(historyList);
+    refreshHistory();
+  }
+
+  private LinearLayout buildHistorySelectionBar() {
+    LinearLayout bar = row();
+    bar.setGravity(Gravity.CENTER_VERTICAL);
+    bar.setPadding(dp(14), dp(8), dp(8), dp(8));
+    bar.setBackground(outline(SURFACE, GREEN, 14));
+    historySelectionCount = text("0 selected", 14, FOREST, true);
+    bar.addView(
+        historySelectionCount,
+        new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+    TextView all = text("SELECT ALL", 11, GREEN, true);
+    all.setGravity(Gravity.CENTER);
+    all.setMinWidth(dp(96));
+    all.setMinHeight(dp(48));
+    all.setOnClickListener(view -> toggleSelectAllHistory());
+    bar.addView(all);
+    TextView delete = text("DELETE", 11, ERROR, true);
+    delete.setGravity(Gravity.CENTER);
+    delete.setMinWidth(dp(74));
+    delete.setMinHeight(dp(48));
+    delete.setOnClickListener(view -> confirmHistoryDeletion());
+    bar.addView(delete);
+    bar.setVisibility(View.GONE);
+    LinearLayout.LayoutParams params =
+        new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+    params.bottomMargin = dp(12);
+    bar.setLayoutParams(params);
+    return bar;
+  }
+
+  private void setHistorySelectionMode(boolean enabled) {
+    historySelectionMode = enabled;
+    if (!enabled) {
+      selectedHistory.clear();
+    }
+    if (historyBack != null) {
+      historyBack.setEnabled(historyPage);
+    }
+    refreshHistory();
+  }
+
+  private void toggleSelectAllHistory() {
+    List<DownloadRecord> entries = DownloadHistory.all(this);
+    if (selectedHistory.size() == entries.size()) {
+      selectedHistory.clear();
+    } else {
+      selectedHistory.clear();
+      for (DownloadRecord entry : entries) {
+        selectedHistory.add(entry.getId());
+      }
+    }
+    refreshHistory();
+  }
+
+  private void toggleHistoryEntry(String id) {
+    if (!selectedHistory.add(id)) {
+      selectedHistory.remove(id);
+    }
+    refreshHistory();
+  }
+
+  private void refreshHistory() {
+    if (!historyPage || historyList == null) {
+      return;
+    }
+    List<DownloadRecord> entries = DownloadHistory.all(this);
+    long bytes = 0;
+    for (DownloadRecord entry : entries) {
+      if (DownloadHistory.hasArtifact(this, entry)) {
+        bytes += entry.getArtifactBytes();
+      }
+    }
+    historySummary.setText(
+        entries.isEmpty()
+            ? "Validated APK downloads will appear here."
+            : entries.size()
+                + (entries.size() == 1 ? " download" : " downloads")
+                + " · "
+                + formatBytes(bytes)
+                + " saved\nDelete saved APKs here without uninstalling their apps.");
+    historySelectAction.setEnabled(!entries.isEmpty());
+    historySelectAction.setAlpha(entries.isEmpty() ? .45f : 1f);
+    historySelectAction.setText(historySelectionMode ? "DONE" : "SELECT");
+    historySelectionBar.setVisibility(historySelectionMode ? View.VISIBLE : View.GONE);
+    historySelectionCount.setText(
+        String.format(Locale.getDefault(), "%d selected", selectedHistory.size()));
+
+    historyList.removeAllViews();
+    if (entries.isEmpty()) {
+      historySelectionMode = false;
+      selectedHistory.clear();
+      historySelectionBar.setVisibility(View.GONE);
+      historyList.addView(buildHistoryEmptyState());
+      return;
+    }
+    for (DownloadRecord entry : entries) {
+      historyList.addView(buildHistoryCard(entry), libraryCardParams());
+    }
+  }
+
+  private View buildHistoryCard(DownloadRecord entry) {
+    LinearLayout card = row();
+    boolean selected = selectedHistory.contains(entry.getId());
+    card.setGravity(Gravity.CENTER_VERTICAL);
+    card.setPadding(dp(15), dp(15), dp(14), dp(15));
+    card.setBackground(outline(selected ? PALE_MINT : SURFACE, selected ? GREEN : BORDER, 17));
+    card.setMinimumHeight(dp(92));
+
+    TextView selection = text(selected ? "✓" : "○", 22, selected ? GREEN : MUTED, true);
+    selection.setGravity(Gravity.CENTER);
+    selection.setVisibility(historySelectionMode ? View.VISIBLE : View.GONE);
+    card.addView(selection, new LinearLayout.LayoutParams(dp(40), dp(48)));
+
+    Drawable drawable = ContextCompat.getDrawable(this, android.R.drawable.sym_def_app_icon);
+    boolean installed = false;
+    try {
+      ApplicationInfo info = getPackageManager().getApplicationInfo(entry.getPackageName(), 0);
+      drawable = getPackageManager().getApplicationIcon(info);
+      installed = true;
+    } catch (PackageManager.NameNotFoundException ignored) {
+      // The saved APK and metadata remain useful after the app is removed.
+    }
+    ImageView icon = new ImageView(this);
+    icon.setImageDrawable(drawable);
+    icon.setAlpha(installed ? 1f : .55f);
+    icon.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+    card.addView(icon, new LinearLayout.LayoutParams(dp(48), dp(48)));
+
+    LinearLayout details = column();
+    LinearLayout.LayoutParams detailsParams =
+        new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1);
+    detailsParams.setMarginStart(dp(14));
+    card.addView(details, detailsParams);
+    TextView name =
+        text(
+            entry.getLabel().isEmpty() ? entry.getPackageName() : entry.getLabel(),
+            16,
+            FOREST,
+            true);
+    name.setMaxLines(2);
+    details.addView(name);
+    details.addView(text(historyMetadata(entry), 12, MUTED, false));
+    String state = historyState(entry, installed);
+    details.addView(text(state, 12, installed ? GREEN : MUTED, true));
+
+    if (!historySelectionMode) {
+      TextView saved = text(DownloadHistory.hasArtifact(this, entry) ? "APK" : "LOG", 10, MUTED, true);
+      saved.setGravity(Gravity.CENTER);
+      saved.setBackground(round(PALE_MINT, 10));
+      card.addView(saved, new LinearLayout.LayoutParams(dp(44), dp(30)));
+    }
+    card.setContentDescription(
+        (selected ? "Selected. " : "")
+            + (entry.getLabel().isEmpty() ? entry.getPackageName() : entry.getLabel())
+            + ". "
+            + state);
+    card.setFocusable(true);
+    card.setOnClickListener(
+        view -> {
+          if (historySelectionMode) {
+            toggleHistoryEntry(entry.getId());
+          }
+        });
+    card.setOnLongClickListener(
+        view -> {
+          if (!historySelectionMode) {
+            historySelectionMode = true;
+          }
+          toggleHistoryEntry(entry.getId());
+          return true;
+        });
+    return card;
+  }
+
+  private View buildHistoryEmptyState() {
+    LinearLayout empty = column();
+    empty.setGravity(Gravity.CENTER);
+    empty.setPadding(dp(24), dp(42), dp(24), dp(42));
+    empty.setBackground(outline(SURFACE, BORDER, 18));
+    TextView glyph = text("↧", 38, GREEN, true);
+    glyph.setGravity(Gravity.CENTER);
+    empty.addView(glyph);
+    empty.addView(space(8));
+    TextView title = text("No downloads yet", 18, FOREST, true);
+    title.setGravity(Gravity.CENTER);
+    empty.addView(title);
+    empty.addView(space(6));
+    TextView body =
+        text("Your next validated APK will be saved here until you delete it.", 14, MUTED, false);
+    body.setGravity(Gravity.CENTER);
+    empty.addView(body);
+    return empty;
+  }
+
+  private String historyMetadata(DownloadRecord entry) {
+    List<String> parts = new ArrayList<>();
+    if (!entry.getVersionName().isEmpty()) {
+      parts.add("v" + entry.getVersionName());
+    } else if (entry.getVersionCode() > 0) {
+      parts.add("build " + entry.getVersionCode());
+    }
+    if (entry.getDownloadedAt() > 0) {
+      parts.add(
+          DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT)
+              .format(new Date(entry.getDownloadedAt())));
+    } else {
+      parts.add("Saved before history was added");
+    }
+    if (DownloadHistory.hasArtifact(this, entry)) {
+      parts.add(formatBytes(entry.getArtifactBytes()));
+    }
+    if (!entry.getSourceHost().isEmpty()) {
+      parts.add(entry.getSourceHost());
+    }
+    return String.join(" · ", parts);
+  }
+
+  private String historyState(DownloadRecord entry, boolean installed) {
+    boolean saved = DownloadHistory.hasArtifact(this, entry);
+    if (installed) {
+      return saved ? "Installed · APK saved" : "Installed · history only";
+    }
+    if (DownloadOutcomes.INSTALLED.equals(entry.getOutcome())) {
+      return saved ? "Removed from device · APK saved" : "Removed from device";
+    }
+    if (DownloadOutcomes.CANCELLED.equals(entry.getOutcome())) {
+      return saved ? "Install cancelled · APK saved" : "Install cancelled";
+    }
+    if (DownloadOutcomes.FAILED.equals(entry.getOutcome())) {
+      return saved ? "Install didn’t finish · APK saved" : "Install didn’t finish";
+    }
+    return saved ? "Downloaded · APK saved" : "Downloaded";
+  }
+
+  private void confirmHistoryDeletion() {
+    if (selectedHistory.isEmpty()) {
+      showMessage("Nothing selected", "Select one or more downloads to delete.");
+      return;
+    }
+    List<DownloadRecord> entries = DownloadHistory.all(this);
+    long bytes = 0;
+    for (DownloadRecord entry : entries) {
+      if (selectedHistory.contains(entry.getId()) && DownloadHistory.hasArtifact(this, entry)) {
+        bytes += entry.getArtifactBytes();
+      }
+    }
+    int count = selectedHistory.size();
+    long selectedBytes = bytes;
+    new AlertDialog.Builder(this)
+        .setTitle("Delete " + count + (count == 1 ? " download?" : " downloads?"))
+        .setMessage(
+            "This permanently removes the selected APK files and their history records, freeing up to "
+                + formatBytes(selectedBytes)
+                + ". Apps already installed on this device will stay installed.")
+        .setNegativeButton("Keep", null)
+        .setPositiveButton(
+            "Delete",
+            (dialog, which) -> {
+              int removed = DownloadHistory.delete(this, new HashSet<>(selectedHistory));
+              selectedHistory.clear();
+              historySelectionMode = false;
+              refreshHistory();
+              showMessage(
+                  "Downloads deleted",
+                  removed
+                      + (removed == 1 ? " history item was removed." : " history items were removed."));
+            })
+        .show();
+  }
+
+  private String formatBytes(long bytes) {
+    if (bytes < 1024) {
+      return bytes + " B";
+    }
+    if (bytes < 1024L * 1024L) {
+      return String.format(Locale.getDefault(), "%.1f KB", bytes / 1024.0);
+    }
+    return String.format(Locale.getDefault(), "%.1f MB", bytes / 1048576.0);
+  }
+
+  private View settingsRow(
+      String icon, String label, String value, View.OnClickListener listener) {
+    LinearLayout item = row();
+    item.setGravity(Gravity.CENTER_VERTICAL);
+    item.setPadding(dp(20), 0, dp(20), 0);
+    if (!icon.isEmpty()) {
+      TextView iconView = text(icon, 20, FOREST, false);
+      iconView.setGravity(Gravity.CENTER);
+      item.addView(iconView, new LinearLayout.LayoutParams(dp(34), dp(64)));
+    }
+    TextView labelView = text(label, 16, FOREST, false);
+    item.addView(
+        labelView,
+        new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+    TextView valueView = text(value, 14, value.isEmpty() ? MUTED : GREEN, false);
+    item.addView(valueView);
+    item.setMinimumHeight(dp(64));
+    item.setFocusable(listener != null);
+    item.setOnClickListener(listener);
+    return item;
+  }
+
+  private View buildLibraryHeader() {
+    LinearLayout row = row();
+    row.setGravity(Gravity.CENTER_VERTICAL);
+    row.addView(
+        text("Apps", 16, FOREST, true),
+        new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+    libraryCount = text("0 apps", 12, MUTED, true);
+    libraryCount.setPadding(dp(10), dp(6), dp(10), dp(6));
+    libraryCount.setBackground(round(SURFACE, 20));
+    row.addView(libraryCount);
+    return row;
+  }
+
+  private View buildSearch() {
+    search = new EditText(this);
+    search.setSingleLine(true);
+    search.setTextSize(16);
+    search.setTextColor(FOREST);
+    search.setHintTextColor(MUTED);
+    search.setHint("Search apps");
+    search.setContentDescription("Search your Airreload Go library");
+    search.setInputType(InputType.TYPE_CLASS_TEXT);
+    search.setMinimumHeight(dp(58));
+    search.setPadding(dp(18), dp(12), dp(18), dp(12));
+    search.setBackground(outline(SURFACE, BORDER, 16));
+    search.setOnFocusChangeListener(
+        (view, focused) -> view.setBackground(outline(SURFACE, focused ? GREEN : BORDER, 16)));
+    search.setText(query);
+    search.addTextChangedListener(
+        new TextWatcher() {
+          @Override
+          public void beforeTextChanged(CharSequence value, int start, int count, int after) {}
+
+          @Override
+          public void onTextChanged(CharSequence value, int start, int before, int count) {
+            query = value.toString();
+            refreshLibrary();
+          }
+
+          @Override
+          public void afterTextChanged(Editable value) {}
+        });
+    return search;
+  }
+
+  private void showOnboarding() {
+    if (isFinishing() || isDestroyed() || onboardingVisible) {
+      return;
+    }
+    onboardingVisible = true;
+    if (appContent != null) {
+      appContent.setVisibility(View.INVISIBLE);
+    }
+    Dialog dialog = new Dialog(this);
+    dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
+    dialog.setCancelable(false);
+    LinearLayout page = column();
+    page.setGravity(Gravity.CENTER_HORIZONTAL);
+    page.setPadding(dp(24), dp(30), dp(24), dp(26));
+    page.setBackgroundColor(CREAM);
+    OnboardingArt art = new OnboardingArt();
+    page.addView(art, new LinearLayout.LayoutParams(dp(250), dp(210)));
+    page.addView(space(12));
+    TextView eyebrow = text("ONE-TIME SETUP", 11, GREEN, true);
+    eyebrow.setLetterSpacing(.15f);
+    page.addView(eyebrow);
+    page.addView(space(9));
+    TextView title = text("Let Airreload Go hand apps to Android", 29, FOREST, true);
+    title.setGravity(Gravity.CENTER);
+    page.addView(title);
+    page.addView(space(12));
+    TextView explanation =
+        text(
+            "Android calls this “Allow from this source.” It only lets Airreload Go open Android’s normal install screen—you still approve every app.",
+            15,
+            MUTED,
+            false);
+    explanation.setGravity(Gravity.CENTER);
+    explanation.setLineSpacing(dp(3), 1f);
+    page.addView(explanation);
+    page.addView(space(22));
+    page.addView(onboardingPoint("1", "Airreload Go validates and downloads the APK"));
+    page.addView(space(10));
+    page.addView(onboardingPoint("2", "Android shows its mandatory Install button"));
+    page.addView(space(10));
+    page.addView(onboardingPoint("3", "Turn access off later whenever you like"));
+    page.addView(space(26));
+    Button open = button("Open Android settings", GREEN, Color.WHITE);
+    open.setOnClickListener(
+        view -> {
+          State.prefs(this).edit().putBoolean("onboarding_seen", true).apply();
+          onboardingVisible = false;
+          dialog.dismiss();
+          openInstallSettings();
+        });
+    page.addView(open, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(56)));
+    page.addView(space(8));
+    Button later = button("I’ll do this later", CREAM, MUTED);
+    later.setOnClickListener(
+        view -> {
+          State.prefs(this).edit().putBoolean("onboarding_seen", true).apply();
+          onboardingVisible = false;
+          dialog.dismiss();
+          State.update(
+              this,
+              "idle",
+              "No problem. Airreload Go will ask again after your first scan.",
+              0);
+        });
+    page.addView(later, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)));
+    ScrollView onboardingScroll = new ScrollView(this);
+    onboardingScroll.setFillViewport(true);
+    onboardingScroll.setClipToPadding(false);
+    onboardingScroll.setBackgroundColor(CREAM);
+    onboardingScroll.addView(
+        page,
+        new ScrollView.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+    dialog.setContentView(onboardingScroll);
+    dialog.setOnDismissListener(
+        ignored -> {
+          onboardingVisible = false;
+          if (appContent != null) {
+            appContent.setVisibility(View.VISIBLE);
+          }
+        });
+    Window window = dialog.getWindow();
+    if (window != null) {
+      window.setBackgroundDrawable(new ColorDrawable(CREAM));
+      window.setLayout(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT);
+    }
+    dialog.show();
+    if (window != null) {
+      window.setLayout(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT);
+      window.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+      window.setStatusBarColor(CREAM);
+      window.setNavigationBarColor(Color.rgb(20, 25, 31));
+      WindowCompat.setDecorFitsSystemWindows(window, false);
+      WindowCompat.getInsetsController(window, window.getDecorView()).setAppearanceLightStatusBars(false);
+      WindowCompat.getInsetsController(window, window.getDecorView()).setAppearanceLightNavigationBars(false);
+      ViewCompat.setOnApplyWindowInsetsListener(
+          onboardingScroll,
+          (view, insets) -> {
+            androidx.core.graphics.Insets bars = insets.getInsets(WindowInsetsCompat.Type.systemBars());
+            view.setPadding(bars.left, bars.top, bars.right, bars.bottom);
+            return insets;
+          });
+    }
+  }
+
+  private View onboardingPoint(String number, String label) {
+    LinearLayout row = row();
+    row.setGravity(Gravity.CENTER_VERTICAL);
+    TextView badge = text(number, 13, FOREST, true);
+    badge.setGravity(Gravity.CENTER);
+    badge.setBackground(round(MINT, 20));
+    row.addView(badge, new LinearLayout.LayoutParams(dp(34), dp(34)));
+    TextView copy = text(label, 14, FOREST, true);
+    LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1);
+    params.setMarginStart(dp(12));
+    row.addView(copy, params);
+    return row;
+  }
+
+  private boolean ready() {
+    return !State.busy(this);
+  }
+
+  private void openCamera() {
+    ScanOptions options =
+        new ScanOptions()
+            .setCaptureActivity(ScanActivity.class)
+            .setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+            .setPrompt(getString(R.string.scanner_prompt))
+            .setBeepEnabled(false)
+            .setOrientationLocked(false)
+            .setBarcodeImageEnabled(false);
+    scanner.launch(options);
+  }
+
+  private void acceptLink(String raw) {
+    if (!ready()) {
+      return;
+    }
+    State.prefs(this).edit().remove("queued_url").apply();
+    try {
+      java.net.URI url = ApkUrl.parse(raw);
+      BottomSheetDialog sheet = new BottomSheetDialog(this);
+      LinearLayout content = sheetContent(sheet, "Confirm download");
+      content.addView(space(20));
+      TextView source = text(url.getScheme() + "://" + url.getRawAuthority(), 18, FOREST, true);
+      source.setTextDirection(View.TEXT_DIRECTION_LTR);
+      source.setTextIsSelectable(true);
+      content.addView(source);
+      content.addView(space(12));
+      content.addView(text("Download an APK from this source? Android will ask you to approve installation.",
+          15, MUTED, false));
+      if ("http".equalsIgnoreCase(url.getScheme())) {
+        content.addView(space(12));
+        content.addView(text("This connection is unencrypted. Use it only on a trusted development network.",
+            14, ERROR, false));
+      }
+      content.addView(space(24));
+      Button confirm = button("Download and review", GREEN, Color.red(CREAM) > 128 ? Color.WHITE : CREAM);
+      confirm.setOnClickListener(view -> {
+        confirm.setEnabled(false);
+        sheet.setOnDismissListener(dialog -> {
+          activeSheet = null;
+          if (isFinishing() || isDestroyed() || !ready()) return;
+          State.prefs(this).edit().putString("queued_url", url.toString()).apply();
+          if (!getPackageManager().canRequestPackageInstalls()) {
+            openInstallSettings();
+          } else {
+            maybeAskNotificationsAndContinue();
+          }
+        });
+        sheet.dismiss();
+      });
+      content.addView(confirm, new LinearLayout.LayoutParams(-1, dp(56)));
+      showSheet(sheet, content);
+    } catch (IllegalArgumentException exception) {
+      State.update(this, "error", exception.getMessage(), 0);
+    }
+    refreshStatus();
+  }
+
+  private void openInstallSettings() {
+    boolean hasQueuedLink = State.prefs(this).getString("queued_url", null) != null;
+    State.update(
+        this,
+        hasQueuedLink ? "permission_needed" : "idle",
+        "Turn on Allow from this source, then come back."
+            + (hasQueuedLink ? " Your scan is saved and will resume automatically." : ""),
+        0);
+    try {
+      sourceSettings.launch(
+          new Intent(
+              Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+              Uri.parse("package:" + getPackageName())));
+    } catch (ActivityNotFoundException exception) {
+      State.update(
+          this,
+          hasQueuedLink ? "permission_needed" : "idle",
+          "Open Settings → Special app access → Install unknown apps → Airreload Go.",
+          0);
+    }
+  }
+
+  private void maybeAskNotificationsAndContinue() {
+    if (State.prefs(this).getString("queued_url", null) == null
+        || State.busy(this)
+        || !getPackageManager().canRequestPackageInstalls()) {
+      return;
+    }
+    if (Build.VERSION.SDK_INT >= 33
+        && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
+            != PackageManager.PERMISSION_GRANTED
+        && !State.prefs(this).getBoolean("notification_asked", false)) {
+      State.prefs(this).edit().putBoolean("notification_asked", true).apply();
+      notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS);
+      return;
+    }
+    continueQueuedDownload();
+  }
+
+  private void continueQueuedDownload() {
+    String url = State.prefs(this).getString("queued_url", null);
+    if (url == null || State.busy(this) || !getPackageManager().canRequestPackageInstalls()) {
+      return;
+    }
+    State.prefs(this)
+        .edit()
+        .remove("queued_url")
+        .remove("session")
+        .remove("package")
+        .remove("package_baseline_update")
+        .putString("last_url", url)
+        .apply();
+    State.update(this, "downloading", "Warming up the download…", -1);
+    try {
+      ContextCompat.startForegroundService(
+          this, new Intent(this, InstallService.class).putExtra("url", url));
+    } catch (RuntimeException exception) {
+      State.update(
+          this,
+          "error",
+          "Airreload Go couldn’t start the download. Return to the app and try again.",
+          0);
+    }
+    refreshStatus();
+  }
+
+  private void showPendingInstall(boolean force) {
+    if (!foreground
+        || !"awaiting_install".equals(State.prefs(this).getString("phase", ""))) {
+      return;
+    }
+    if (!force && State.prefs(this).getBoolean("confirmation_shown", false)) {
+      return;
+    }
+    PendingIntent pending = Confirmation.get(this);
+    if (pending == null) {
+      Installer.cancel(this);
+      State.update(this, "error", "The install session expired. Scan the code to try again.", 0);
+      return;
+    }
+    State.prefs(this).edit().putBoolean("confirmation_shown", true).apply();
+    try {
+      pending.send();
+      getSystemService(NotificationManager.class).cancel(202);
+    } catch (PendingIntent.CanceledException exception) {
+      Installer.cancel(this);
+      State.update(this, "error", "The install session expired. Scan the code to try again.", 0);
+    }
+  }
+
+  private void cancelCurrentFlow() {
+    stopService(new Intent(this, InstallService.class));
+    Installer.cancel(this);
+    State.update(this, "idle", "Cancelled. Nothing was added to your library.", 0);
+  }
+
+  private void refreshStatus() {
+    if (appState != null) {
+      appState.refreshNow();
+    }
+  }
+
+  private void renderState(AppUiState state) {
+    if (isFinishing() || isDestroyed()) {
+      return;
+    }
+    currentState = state;
+    if (scanButton != null) {
+      scanButton.setEnabled(!state.busy);
+      scanButton.setAlpha(state.busy ? .48f : 1f);
+    }
+    if (urlSubmit != null) {
+      urlSubmit.setEnabled(!state.busy);
+      urlSubmit.setAlpha(state.busy ? .48f : 1f);
+    }
+    refreshLibrary();
+    refreshHistory();
+    if (foreground) {
+      showPendingInstall(false);
+    }
+    String terminalKey = state.phase + "|" + state.message;
+    if ("error".equals(state.phase) && !terminalKey.equals(lastTerminalState) && foreground) {
+      lastTerminalState = terminalKey;
+      showMessage(
+          "Installation stopped",
+          state.message.isEmpty() ? "The installation did not finish." : state.message);
+    } else if ("idle".equals(state.phase) || state.busy) {
+      lastTerminalState = "";
+    }
+  }
+
+  private void refreshLibrary() {
+    if (library == null) {
+      return;
+    }
+    library.removeAllViews();
+    PackageManager packageManager = getPackageManager();
+    Set<String> packages = State.installedPackages(this);
+    String activePackage =
+        currentState.busy ? State.prefs(this).getString("package", "") : "";
+    List<DownloadRecord> history = DownloadHistory.all(this);
+    Map<String, Long> latestDownloads = new HashMap<>();
+    for (DownloadRecord entry : history) {
+      if (DownloadOutcomes.INSTALLED.equals(entry.getOutcome())) {
+        latestDownloads.merge(entry.getPackageName(), entry.getDownloadedAt(), Math::max);
+      }
+    }
+    List<LibraryApp> apps = new ArrayList<>();
+    for (String packageName : packages) {
+      if (currentState.busy && packageName.equals(activePackage)) {
+        continue;
+      }
+      ApplicationInfo info = null;
+      String label = packageName;
+      boolean available = false;
+      boolean enabled = false;
+      Drawable icon = ContextCompat.getDrawable(this, android.R.drawable.sym_def_app_icon);
+      try {
+        info = packageManager.getApplicationInfo(packageName, 0);
+        label = packageManager.getApplicationLabel(info).toString();
+        icon = packageManager.getApplicationIcon(info);
+        enabled = info.enabled;
+        available = packageManager.getLaunchIntentForPackage(packageName) != null;
+      } catch (PackageManager.NameNotFoundException ignored) {
+        // Keep a friendly unavailable entry so removal is explicit rather than mysterious.
+      }
+      apps.add(
+          new LibraryApp(
+              packageName,
+              label,
+              icon,
+              available,
+              enabled,
+              info != null,
+              latestDownloads.getOrDefault(packageName, 0L)));
+    }
+    apps.sort(
+        Comparator.comparingLong((LibraryApp app) -> app.downloadedAt)
+            .reversed()
+            .thenComparing(app -> app.label.toLowerCase(Locale.ROOT)));
+
+    int visible = 0;
+    String normalizedQuery = query.trim().toLowerCase(Locale.ROOT);
+    if (currentState.busy) {
+      visible++;
+      library.addView(buildActiveAppCard(history), libraryCardParams());
+    }
+    for (LibraryApp app : apps) {
+      if (!normalizedQuery.isEmpty()
+          && !app.label.toLowerCase(Locale.ROOT).contains(normalizedQuery)
+          && !app.packageName.toLowerCase(Locale.ROOT).contains(normalizedQuery)) {
+        continue;
+      }
+      visible++;
+      library.addView(buildLibraryCard(app), libraryCardParams());
+    }
+    libraryCount.setText(
+        getResources().getQuantityString(
+            R.plurals.library_app_count, packages.size(), packages.size()));
+    search.setVisibility(packages.isEmpty() ? View.GONE : View.VISIBLE);
+    if (visible == 0) {
+      library.addView(buildEmptyState(packages.isEmpty(), !normalizedQuery.isEmpty()));
+    }
+  }
+
+  private View buildActiveAppCard(List<DownloadRecord> history) {
+    String packageName = State.prefs(this).getString("package", "");
+    String label = "New app";
+    for (DownloadRecord entry : history) {
+      if (!packageName.isEmpty() && packageName.equals(entry.getPackageName())) {
+        label = entry.getLabel().isEmpty() ? packageName : entry.getLabel();
+        break;
+      }
+    }
+    String status;
+    if ("downloading".equals(currentState.phase)) {
+      status = currentState.progress >= 0 ? "Downloading · " + currentState.progress + "%" : "Downloading";
+    } else if ("awaiting_install".equals(currentState.phase)) {
+      status = "Waiting for Android confirmation";
+    } else {
+      status = "Installing";
+    }
+
+    LinearLayout card = column();
+    card.setPadding(dp(15), dp(15), dp(15), dp(14));
+    card.setBackground(outline(PALE_MINT, GREEN, 17));
+    LinearLayout top = row();
+    top.setGravity(Gravity.CENTER_VERTICAL);
+    TextView glyph = text("↓", 24, GREEN, true);
+    glyph.setGravity(Gravity.CENTER);
+    glyph.setBackground(round(SURFACE, 12));
+    top.addView(glyph, new LinearLayout.LayoutParams(dp(48), dp(48)));
+    LinearLayout details = column();
+    LinearLayout.LayoutParams detailsParams =
+        new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1);
+    detailsParams.setMarginStart(dp(14));
+    top.addView(details, detailsParams);
+    details.addView(text(label, 16, FOREST, true));
+    details.addView(text(status, 13, GREEN, true));
+    TextView cancel = text("×", 28, MUTED, false);
+    cancel.setGravity(Gravity.CENTER);
+    cancel.setContentDescription("Cancel installation");
+    cancel.setOnClickListener(view -> cancelCurrentFlow());
+    cancel.setVisibility("installing".equals(currentState.phase) ? View.GONE : View.VISIBLE);
+    top.addView(cancel, new LinearLayout.LayoutParams(dp(48), dp(48)));
+    card.addView(top);
+    ProgressBar progressBar =
+        new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+    progressBar.setProgressTintList(android.content.res.ColorStateList.valueOf(GREEN));
+    progressBar.setProgressBackgroundTintList(
+        android.content.res.ColorStateList.valueOf(SURFACE));
+    progressBar.setIndeterminate(
+        currentState.progress < 0 || !"downloading".equals(currentState.phase));
+    progressBar.setProgress(Math.max(0, currentState.progress));
+    LinearLayout.LayoutParams progressParams =
+        new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(5));
+    progressParams.topMargin = dp(12);
+    card.addView(progressBar, progressParams);
+    if ("awaiting_install".equals(currentState.phase)) {
+      card.setOnClickListener(view -> showPendingInstall(true));
+      card.setContentDescription(label + ". Waiting for Android confirmation. Tap to continue.");
+    } else {
+      card.setContentDescription(label + ". " + status);
+    }
+    return card;
+  }
+
+  private View buildLibraryCard(LibraryApp app) {
+    LinearLayout card = row();
+    card.setGravity(Gravity.CENTER_VERTICAL);
+    card.setPadding(dp(15), dp(15), dp(14), dp(15));
+    card.setBackground(outline(SURFACE, BORDER, 17));
+    card.setMinimumHeight(dp(78));
+    ImageView icon = new ImageView(this);
+    icon.setImageDrawable(app.icon);
+    icon.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+    icon.setAlpha(app.installed && app.enabled ? 1f : .45f);
+    card.addView(icon, new LinearLayout.LayoutParams(dp(48), dp(48)));
+
+    LinearLayout details = column();
+    LinearLayout.LayoutParams detailsParams = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1);
+    detailsParams.setMarginStart(dp(14));
+    card.addView(details, detailsParams);
+    TextView name = text(app.label, 16, FOREST, true);
+    name.setMaxLines(2);
+    details.addView(name);
+    String meta;
+    int metaColor;
+    if (!app.installed) {
+      meta = "Removed from this device";
+      metaColor = ERROR;
+    } else if (!app.enabled) {
+      meta = "Disabled in Android settings";
+      metaColor = ERROR;
+    } else if (!app.launchable) {
+      meta = "Installed · no launcher screen";
+      metaColor = MUTED;
+    } else {
+      meta = "Ready to open";
+      metaColor = GREEN;
+    }
+    TextView subtitle = text(meta, 12, metaColor, false);
+    details.addView(subtitle);
+    TextView arrow = text(app.launchable && app.enabled ? "↗" : "···", 22, app.launchable ? GREEN : MUTED, true);
+    arrow.setGravity(Gravity.CENTER);
+    card.addView(arrow, new LinearLayout.LayoutParams(dp(44), dp(48)));
+    card.setContentDescription(
+        (app.launchable && app.enabled ? "Open " : "Unavailable: ") + app.label + ". " + meta);
+    card.setFocusable(true);
+    card.setOnClickListener(view -> launchLibraryApp(app));
+    return card;
+  }
+
+  private LinearLayout.LayoutParams libraryCardParams() {
+    LinearLayout.LayoutParams params =
+        new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+    params.bottomMargin = dp(10);
+    return params;
+  }
+
+  private View buildEmptyState(boolean libraryEmpty, boolean hasQuery) {
+    LinearLayout empty = column();
+    empty.setGravity(Gravity.CENTER);
+    empty.setPadding(dp(24), dp(34), dp(24), dp(34));
+    empty.setBackground(outline(SURFACE, BORDER, 18));
+    TextView glyph = text(libraryEmpty ? "⌁" : "○", 38, GREEN, true);
+    glyph.setGravity(Gravity.CENTER);
+    empty.addView(glyph);
+    empty.addView(space(8));
+    TextView title =
+        text(
+            libraryEmpty
+                ? "No apps installed"
+                : hasQuery ? "No matches here" : "Nothing to show",
+            18,
+            FOREST,
+            true);
+    title.setGravity(Gravity.CENTER);
+    empty.addView(title);
+    empty.addView(space(6));
+    TextView body =
+        text(
+            libraryEmpty
+                ? "Installed apps will appear here."
+                : "Try another app name or package name.",
+            14,
+            MUTED,
+            false);
+    body.setGravity(Gravity.CENTER);
+    empty.addView(body);
+    return empty;
+  }
+
+  private void launchLibraryApp(LibraryApp app) {
+    Intent intent = getPackageManager().getLaunchIntentForPackage(app.packageName);
+    if (intent == null || !app.enabled) {
+      showMessage(
+          "This app can’t open right now",
+          app.installed
+              ? "It may be disabled or may not include a launcher screen. Airreload Go will keep it in your library."
+              : "It was removed from this device. Install it again with Airreload Go to bring it back.");
+      refreshLibrary();
+      return;
+    }
+    try {
+      startActivity(intent);
+    } catch (RuntimeException exception) {
+      showMessage(
+          "This app didn’t open",
+          "Android could not launch it. It may have been removed or disabled.");
+      refreshLibrary();
+    }
+  }
+
+  private void showMessage(String title, String message) {
+    new AlertDialog.Builder(this)
+        .setTitle(title)
+        .setMessage(message)
+        .setPositiveButton("Got it", null)
+        .show();
+  }
+
+  private Button button(String label, int background, int foregroundColor) {
+    Button button = new Button(this);
+    button.setText(label);
+    button.setTextSize(15);
+    button.setTextColor(foregroundColor);
+    button.setAllCaps(false);
+    button.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+    button.setBackground(round(background, 16));
+    button.setMinHeight(0);
+    button.setMinimumHeight(0);
+    button.setGravity(Gravity.CENTER);
+    button.setPadding(dp(16), 0, dp(16), 0);
+    return button;
+  }
+
+  private TextView text(String value, int size, int color, boolean bold) {
+    TextView text = new TextView(this);
+    text.setText(value);
+    text.setTextSize(size);
+    text.setTextColor(color);
+    text.setFontFeatureSettings("kern");
+    if (bold) {
+      text.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+    }
+    return text;
+  }
+
+  private LinearLayout row() {
+    LinearLayout layout = new LinearLayout(this);
+    layout.setOrientation(LinearLayout.HORIZONTAL);
+    return layout;
+  }
+
+  private LinearLayout column() {
+    LinearLayout layout = new LinearLayout(this);
+    layout.setOrientation(LinearLayout.VERTICAL);
+    return layout;
+  }
+
+  private View space(int height) {
+    View view = new View(this);
+    view.setLayoutParams(new LinearLayout.LayoutParams(1, dp(height)));
+    return view;
+  }
+
+  private GradientDrawable round(int color, int radius) {
+    GradientDrawable drawable = new GradientDrawable();
+    drawable.setColor(color);
+    drawable.setCornerRadius(dp(radius));
+    return drawable;
+  }
+
+  private GradientDrawable outline(int color, int stroke, int radius) {
+    GradientDrawable drawable = round(color, radius);
+    drawable.setStroke(dp(1), stroke);
+    return drawable;
+  }
+
+  private int dp(float value) {
+    return Math.round(value * getResources().getDisplayMetrics().density);
+  }
+
+  private final class MaxWidthColumn extends LinearLayout {
+    MaxWidthColumn(Context context) {
+      super(context);
+    }
+
+    @Override
+    protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
+      int available = MeasureSpec.getSize(widthMeasureSpec);
+      int maximum = dp(760);
+      int width = Math.min(available, maximum);
+      super.onMeasure(MeasureSpec.makeMeasureSpec(width, MeasureSpec.EXACTLY), heightMeasureSpec);
+    }
+  }
+
+  private final class ScanArt extends View {
+    private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Path path = new Path();
+
+    ScanArt() {
+      super(MainActivity.this);
+    }
+
+    @Override
+    protected void onDraw(Canvas canvas) {
+      super.onDraw(canvas);
+      float scale = Math.min(getWidth() / 230f, getHeight() / 150f);
+      float offsetX = (getWidth() / scale - 230f) / 2f;
+      canvas.save();
+      canvas.scale(scale, scale);
+      canvas.translate(offsetX, 0);
+      paint.setColor(MINT);
+      canvas.drawCircle(115, 76, 70, paint);
+      paint.setColor(FOREST);
+      canvas.drawRoundRect(82, 10, 148, 138, 15, 15, paint);
+      paint.setColor(Color.rgb(249, 252, 248));
+      canvas.drawRoundRect(88, 18, 142, 127, 10, 10, paint);
+      paint.setStyle(Paint.Style.STROKE);
+      paint.setStrokeWidth(4);
+      paint.setStrokeCap(Paint.Cap.ROUND);
+      paint.setColor(GREEN);
+      float[][] corners = {
+        {96, 52, 96, 37, 111, 37},
+        {119, 37, 134, 37, 134, 52},
+        {134, 84, 134, 99, 119, 99},
+        {111, 99, 96, 99, 96, 84}
+      };
+      for (float[] corner : corners) {
+        path.reset();
+        path.moveTo(corner[0], corner[1]);
+        path.lineTo(corner[2], corner[3]);
+        path.lineTo(corner[4], corner[5]);
+        canvas.drawPath(path, paint);
+      }
+      paint.setStyle(Paint.Style.FILL);
+      canvas.drawRect(105, 48, 115, 58, paint);
+      canvas.drawRect(122, 48, 130, 56, paint);
+      canvas.drawRect(105, 66, 113, 74, paint);
+      canvas.drawRect(120, 70, 130, 80, paint);
+      canvas.drawRect(108, 84, 116, 92, paint);
+      paint.setColor(LIME);
+      canvas.drawCircle(160, 35, 13, paint);
+      paint.setColor(FOREST);
+      paint.setStrokeWidth(3);
+      paint.setStyle(Paint.Style.STROKE);
+      canvas.drawLine(160, 29, 160, 40, paint);
+      canvas.drawLine(155, 36, 160, 41, paint);
+      canvas.drawLine(165, 36, 160, 41, paint);
+      paint.setStyle(Paint.Style.FILL);
+      canvas.drawRoundRect(48, 82, 78, 112, 8, 8, paint);
+      paint.setColor(LIME);
+      canvas.drawRect(56, 90, 63, 97, paint);
+      canvas.drawRect(67, 90, 72, 95, paint);
+      canvas.drawRect(56, 101, 62, 107, paint);
+      canvas.drawRect(66, 100, 72, 107, paint);
+      canvas.restore();
+    }
+  }
+
+  private final class OnboardingArt extends View {
+    private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+
+    OnboardingArt() {
+      super(MainActivity.this);
+      setContentDescription("Airreload Go keeps Android in control of every installation");
+    }
+
+    @Override
+    protected void onDraw(Canvas canvas) {
+      super.onDraw(canvas);
+      float scale = Math.min(getWidth() / 250f, getHeight() / 210f);
+      canvas.save();
+      canvas.scale(scale, scale);
+      paint.setColor(PALE_MINT);
+      canvas.drawCircle(125, 105, 96, paint);
+      paint.setColor(FOREST);
+      canvas.drawRoundRect(78, 22, 172, 188, 22, 22, paint);
+      paint.setColor(Color.rgb(249, 252, 248));
+      canvas.drawRoundRect(86, 32, 164, 173, 15, 15, paint);
+      paint.setColor(MINT);
+      canvas.drawCircle(125, 93, 30, paint);
+      paint.setColor(GREEN);
+      canvas.drawRoundRect(108, 91, 142, 122, 8, 8, paint);
+      canvas.drawRoundRect(114, 72, 136, 105, 14, 14, paint);
+      paint.setColor(LIME);
+      canvas.drawCircle(174, 51, 18, paint);
+      paint.setColor(FOREST);
+      paint.setStrokeWidth(4);
+      paint.setStyle(Paint.Style.STROKE);
+      canvas.drawLine(174, 43, 174, 59, paint);
+      canvas.drawLine(168, 53, 174, 60, paint);
+      canvas.drawLine(180, 53, 174, 60, paint);
+      canvas.restore();
+    }
+  }
+
+  private static final class LibraryApp {
+    final String packageName;
+    final String label;
+    final Drawable icon;
+    final boolean launchable;
+    final boolean enabled;
+    final boolean installed;
+    final long downloadedAt;
+
+    LibraryApp(
+        String packageName,
+        String label,
+        Drawable icon,
+        boolean launchable,
+        boolean enabled,
+        boolean installed,
+        long downloadedAt) {
+      this.packageName = packageName;
+      this.label = label;
+      this.icon = icon;
+      this.launchable = launchable;
+      this.enabled = enabled;
+      this.installed = installed;
+      this.downloadedAt = downloadedAt;
+    }
+  }
+
+}

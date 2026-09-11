@@ -1,0 +1,25 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="1254"
+    android:viewportHeight="1254">
+    <!-- Match the approved mark and the foreground's 14% adaptive-mask padding. -->
+    <group
+        android:scaleX="0.72"
+        android:scaleY="0.72"
+        android:translateX="175.56"
+        android:translateY="175.56">
+        <path
+            android:fillColor="#FFFFFFFF"
+            android:pathData="M224,501 C284,317 465,184 667,184 C824,184 946,267 1011,403 L1079,373 C1095,364 1108,372 1103,392 L1045,609 C1040,631 1027,633 1011,618 L806,470 C790,458 799,445 815,444 L881,441 C829,358 755,315 651,315 C493,306 342,428 224,501 Z" />
+        <path
+            android:fillColor="#FFFFFFFF"
+            android:pathData="M116,557 C226,526 319,485 403,429 C433,406 459,433 445,458 C422,507 278,553 116,557 Z M106,611 C189,593 276,573 347,557 C369,550 386,556 385,573 C384,592 354,593 332,596 C248,606 169,616 106,611 Z" />
+        <path
+            android:fillColor="#FFFFFFFF"
+            android:pathData="M126,666 C221,635 287,614 343,668 C396,721 424,814 480,861 C546,912 603,929 665,921 C831,903 934,777 937,610 C976,647 1025,700 1060,628 C1055,861 882,1058 652,1058 C424,1058 238,908 207,708 C203,681 204,678 181,674 Z" />
+        <path
+            android:fillColor="#FFFFFFFF"
+            android:pathData="M565,394 L690,394 Q717,394 717,421 L717,638 L793,638 C820,638 837,664 814,687 L653,850 Q628,876 605,851 L440,689 C417,664 436,638 459,638 L539,638 L539,421 Q539,394 565,394 Z" />
+    </group>
+</vector>

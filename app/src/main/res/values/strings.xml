@@ -1,0 +1,14 @@
+<resources>
+    <string name="app_name">Airreload Go</string>
+    <string name="notification_downloads">App downloads</string>
+    <string name="notification_ready">Ready to install</string>
+    <string name="notification_ready_title">Your app is ready</string>
+    <string name="notification_ready_body">Open Airreload Go to confirm installation with Android.</string>
+    <string name="notification_preparing">Preparing download…</string>
+    <string name="notification_preparing_install">Preparing installation…</string>
+    <string name="scanner_prompt">Center an APK QR code in the frame</string>
+    <plurals name="library_app_count">
+        <item quantity="one">%d app</item>
+        <item quantity="other">%d apps</item>
+    </plurals>
+</resources>

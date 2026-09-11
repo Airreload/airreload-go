@@ -1,0 +1,42 @@
+<resources>
+    <style name="BaseAppTheme" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowActionModeOverlay">true</item>
+        <item name="android:windowBackground">?android:colorBackground</item>
+        <item name="colorAccent">@color/app_primary</item>
+        <item name="colorPrimary">@color/app_primary</item>
+        <item name="colorOnPrimary">@color/app_on_primary</item>
+        <item name="colorPrimaryContainer">@color/app_primary_container</item>
+        <item name="colorOnPrimaryContainer">@color/app_on_primary_container</item>
+        <item name="colorSecondary">@color/app_primary</item>
+        <item name="colorOnSecondary">@color/app_on_primary</item>
+        <item name="colorSecondaryContainer">@color/app_primary_container</item>
+        <item name="colorOnSecondaryContainer">@color/app_on_primary_container</item>
+        <item name="bottomSheetDialogTheme">@style/AppBottomSheetTheme</item>
+    </style>
+    <style name="AppBottomSheetTheme" parent="ThemeOverlay.Material3.BottomSheetDialog">
+        <item name="bottomSheetStyle">@style/AppBottomSheet</item>
+        <item name="android:backgroundDimAmount">0.4</item>
+    </style>
+    <style name="AppBottomSheet" parent="Widget.Material3.BottomSheet.Modal">
+        <item name="shapeAppearanceOverlay">@style/AppSheetShape</item>
+        <item name="android:maxWidth">640dp</item>
+    </style>
+    <style name="AppSheetShape">
+        <item name="cornerFamily">rounded</item>
+        <item name="cornerSizeTopLeft">28dp</item>
+        <item name="cornerSizeTopRight">28dp</item>
+        <item name="cornerSizeBottomLeft">0dp</item>
+        <item name="cornerSizeBottomRight">0dp</item>
+    </style>
+    <style name="AppTheme" parent="BaseAppTheme" />
+    <style name="ScannerTheme" parent="Theme.AppCompat.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:statusBarColor">#081B2A</item>
+        <item name="android:navigationBarColor">#081B2A</item>
+        <item name="colorAccent">#70C7FA</item>
+        <item name="android:windowBackground">#081B2A</item>
+    </style>
+</resources>

@@ -1,0 +1,10 @@
+<resources>
+    <color name="app_primary">#0468D7</color>
+    <color name="app_on_primary">#FFFFFF</color>
+    <color name="app_primary_container">#E5F3FF</color>
+    <color name="app_on_primary_container">#00345B</color>
+    <color name="airy_forest">#123226</color>
+    <color name="airy_green">#2F6B4F</color>
+    <color name="airy_mint">#BFE7CE</color>
+    <color name="airy_cream">#F4F7F0</color>
+</resources>
