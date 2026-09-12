@@ -4,7 +4,7 @@ Airreload Go is an Android companion app for downloading and installing signed,
 standalone APKs from a QR code or URL. Android remains in control of every
 installation and always asks for confirmation before an app is installed.
 
-> **Beta:** The current release is `1.0.1-beta.1` (`versionCode 3`).
+> **Beta:** The current release is `1.1.0-beta.1` (`versionCode 4`).
 
 ## Requirements
 

@@ -895,7 +895,7 @@ public final class MainActivity extends AppCompatActivity {
     root.addView(space(12));
     LinearLayout info = column();
     info.setBackground(outline(SURFACE, BORDER, 15));
-    info.addView(settingsRow("", "Version", "1.0.1", null));
+    info.addView(settingsRow("", "Version", "1.1.0", null));
     info.addView(divider());
     info.addView(settingsRow("", "Supported Android", "8.0+", null));
     root.addView(info);
