@@ -9,6 +9,8 @@ import java.util.Set;
 
 final class State {
   static final String CHANGED = "com.airreload.airreload.STATE_CHANGED";
+  static final String AUTO_OPEN_AFTER_INSTALL = "auto_open_after_install";
+  static final String PENDING_LAUNCH = "pending_launch";
 
   private State() {}
 
@@ -40,11 +42,14 @@ final class State {
     Set<String> existing = prefs(context).getStringSet("installed", Collections.emptySet());
     HashSet<String> packages = new HashSet<>(existing);
     packages.add(packageName);
-    prefs(context).edit().putStringSet("installed", packages).apply();
+    prefs(context)
+        .edit()
+        .putStringSet("installed", packages)
+        .putString(PENDING_LAUNCH, packageName)
+        .apply();
   }
 
   static Set<String> installedPackages(Context context) {
     return new HashSet<>(prefs(context).getStringSet("installed", Collections.emptySet()));
   }
 }
-

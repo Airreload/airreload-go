@@ -10,6 +10,7 @@ import android.os.SystemClock;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.inputmethod.InputMethodManager;
+import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.TextView;
 import androidx.core.view.ViewCompat;
@@ -29,9 +30,16 @@ public final class NavigationUiTest {
   private final Instrumentation instrumentation = InstrumentationRegistry.getInstrumentation();
   private MainActivity activity;
   private String originalTheme;
+  private boolean originalAutoOpen;
+  private String originalPendingLaunch;
 
   @Before public void launch() {
     originalTheme = State.prefs(instrumentation.getTargetContext()).getString("theme_mode", "system");
+    originalAutoOpen =
+        State.prefs(instrumentation.getTargetContext())
+            .getBoolean(State.AUTO_OPEN_AFTER_INSTALL, false);
+    originalPendingLaunch =
+        State.prefs(instrumentation.getTargetContext()).getString(State.PENDING_LAUNCH, null);
     Intent intent = new Intent(instrumentation.getTargetContext(), MainActivity.class)
         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
     activity = (MainActivity) instrumentation.startActivitySync(intent);
@@ -40,7 +48,17 @@ public final class NavigationUiTest {
 
   @After public void close() {
     instrumentation.runOnMainSync(() -> activity.finish());
-    State.prefs(instrumentation.getTargetContext()).edit().putString("theme_mode", originalTheme).commit();
+    android.content.SharedPreferences.Editor editor =
+        State.prefs(instrumentation.getTargetContext())
+            .edit()
+            .putString("theme_mode", originalTheme)
+            .putBoolean(State.AUTO_OPEN_AFTER_INSTALL, originalAutoOpen);
+    if (originalPendingLaunch == null) {
+      editor.remove(State.PENDING_LAUNCH);
+    } else {
+      editor.putString(State.PENDING_LAUNCH, originalPendingLaunch);
+    }
+    editor.commit();
   }
 
   @Test public void historyIsFullScreenAndBackRestoresHome() {
@@ -216,6 +234,40 @@ public final class NavigationUiTest {
     });
   }
 
+  @Test public void postInstallPromptOffersAndRemembersAutoOpen() {
+    instrumentation.runOnMainSync(() -> {
+      State.prefs(activity)
+          .edit()
+          .putBoolean(State.AUTO_OPEN_AFTER_INSTALL, false)
+          .putString(State.PENDING_LAUNCH, activity.getPackageName())
+          .commit();
+      invoke("maybeHandlePendingLaunch");
+    });
+    settle();
+    instrumentation.runOnMainSync(() -> {
+      View decor = sheet().getWindow().getDecorView();
+      assertNotNull(find(decor, "Installed successfully"));
+      assertNotNull(find(decor, "Airreload Go is ready"));
+      View choice = find(decor, "Always open apps after installation");
+      assertTrue(choice instanceof CheckBox);
+      ((CheckBox) choice).setChecked(true);
+      assertTrue(State.prefs(activity).getBoolean(State.AUTO_OPEN_AFTER_INSTALL, false));
+      clickAncestor(find(decor, "Not now"));
+    });
+    settle();
+    instrumentation.runOnMainSync(
+        () -> assertFalse(State.prefs(activity).contains(State.PENDING_LAUNCH)));
+  }
+
+  @Test public void autoOpenPreferenceCanBeChangedInSettings() {
+    State.prefs(activity).edit().putBoolean(State.AUTO_OPEN_AFTER_INSTALL, false).commit();
+    click("Settings");
+    settle();
+    click("Open installed apps automatically");
+    instrumentation.runOnMainSync(
+        () -> assertTrue(State.prefs(activity).getBoolean(State.AUTO_OPEN_AFTER_INSTALL, false)));
+  }
+
   private EditText urlInput() {
     java.util.ArrayList<View> fields = new java.util.ArrayList<>();
     activity.getWindow().getDecorView().findViewsWithText(fields, "App download URL",
@@ -261,6 +313,14 @@ public final class NavigationUiTest {
       Field field = MainActivity.class.getDeclaredField(name);
       field.setAccessible(true);
       return field.get(activity);
+    } catch (ReflectiveOperationException error) { throw new AssertionError(error); }
+  }
+
+  private void invoke(String name) {
+    try {
+      java.lang.reflect.Method method = MainActivity.class.getDeclaredMethod(name);
+      method.setAccessible(true);
+      method.invoke(activity);
     } catch (ReflectiveOperationException error) { throw new AssertionError(error); }
   }
 

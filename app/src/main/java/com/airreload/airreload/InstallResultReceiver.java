@@ -35,8 +35,7 @@ public final class InstallResultReceiver extends BroadcastReceiver {
       }
       State.recordInstalled(context, packageName);
       DownloadHistory.markInstalled(context, packageName);
-      State.prefs(context).edit().remove("pending_launch").apply();
-      State.update(context, "success", "Installed. Tap the app in your library to open it.", 100);
+      State.update(context, "success", "Installed successfully.", 100);
     } else {
       if (status == PackageInstaller.STATUS_FAILURE_ABORTED) {
         DownloadHistory.markCancelled(context);

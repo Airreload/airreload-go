@@ -107,9 +107,8 @@ public final class AppStateViewModel extends AndroidViewModel {
           .remove("session")
           .remove("package")
           .remove("package_baseline_update")
-          .remove("pending_launch")
           .apply();
-      State.update(context, "success", "Installed", 100);
+      State.update(context, "success", "Installed successfully.", 100);
     } catch (PackageManager.NameNotFoundException ignored) {
       // A new package is not complete yet. Keep polling while the install is active.
     }

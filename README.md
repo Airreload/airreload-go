@@ -22,6 +22,10 @@ Airreload Go does not support Android App Bundles (`.aab`), split APK sets,
 3. If prompted, allow Airreload Go to install apps from this source.
 4. Review Android's installation screen and tap **Install**.
 
+After installation, Airreload Go offers to open the app immediately. Select
+**Always open apps after installation** to remember that choice; it can be
+changed later under **Settings → After installation**.
+
 Installed apps appear in the **Apps** list. Validated downloads remain in
 **History** until you delete them.
 
