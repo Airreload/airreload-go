@@ -4,6 +4,7 @@ import static org.junit.Assert.*;
 
 import android.app.Instrumentation;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.res.Configuration;
 import android.graphics.Rect;
 import android.os.SystemClock;
@@ -12,14 +13,20 @@ import android.view.ViewGroup;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.CheckBox;
 import android.widget.EditText;
+import android.widget.ScrollView;
 import android.widget.TextView;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowInsetsCompat;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.platform.app.InstrumentationRegistry;
+import com.airreload.shared.history.DownloadOutcomes;
+import com.airreload.shared.history.DownloadRecord;
+import com.airreload.shared.history.DownloadRecordCodec;
 import com.google.android.material.bottomnavigation.BottomNavigationView;
 import com.google.android.material.bottomsheet.BottomSheetDialog;
 import java.lang.reflect.Field;
+import java.util.HashSet;
+import java.util.Set;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -32,14 +39,21 @@ public final class NavigationUiTest {
   private String originalTheme;
   private boolean originalAutoOpen;
   private String originalPendingLaunch;
+  private boolean hadHistory;
+  private Set<String> originalHistory;
+  private boolean hadLegacyImported;
+  private boolean originalLegacyImported;
 
   @Before public void launch() {
-    originalTheme = State.prefs(instrumentation.getTargetContext()).getString("theme_mode", "system");
-    originalAutoOpen =
-        State.prefs(instrumentation.getTargetContext())
-            .getBoolean(State.AUTO_OPEN_AFTER_INSTALL, false);
-    originalPendingLaunch =
-        State.prefs(instrumentation.getTargetContext()).getString(State.PENDING_LAUNCH, null);
+    SharedPreferences preferences = State.prefs(instrumentation.getTargetContext());
+    originalTheme = preferences.getString("theme_mode", "system");
+    originalAutoOpen = preferences.getBoolean(State.AUTO_OPEN_AFTER_INSTALL, false);
+    originalPendingLaunch = preferences.getString(State.PENDING_LAUNCH, null);
+    hadHistory = preferences.contains("download_history_v1");
+    originalHistory =
+        new HashSet<>(preferences.getStringSet("download_history_v1", new HashSet<>()));
+    hadLegacyImported = preferences.contains("download_history_legacy_imported");
+    originalLegacyImported = preferences.getBoolean("download_history_legacy_imported", false);
     Intent intent = new Intent(instrumentation.getTargetContext(), MainActivity.class)
         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
     activity = (MainActivity) instrumentation.startActivitySync(intent);
@@ -48,7 +62,7 @@ public final class NavigationUiTest {
 
   @After public void close() {
     instrumentation.runOnMainSync(() -> activity.finish());
-    android.content.SharedPreferences.Editor editor =
+    SharedPreferences.Editor editor =
         State.prefs(instrumentation.getTargetContext())
             .edit()
             .putString("theme_mode", originalTheme)
@@ -57,6 +71,16 @@ public final class NavigationUiTest {
       editor.remove(State.PENDING_LAUNCH);
     } else {
       editor.putString(State.PENDING_LAUNCH, originalPendingLaunch);
+    }
+    if (hadHistory) {
+      editor.putStringSet("download_history_v1", originalHistory);
+    } else {
+      editor.remove("download_history_v1");
+    }
+    if (hadLegacyImported) {
+      editor.putBoolean("download_history_legacy_imported", originalLegacyImported);
+    } else {
+      editor.remove("download_history_legacy_imported");
     }
     editor.commit();
   }
@@ -74,6 +98,81 @@ public final class NavigationUiTest {
       assertNotNull(find(activity.getWindow().getDecorView(), "Airreload Go"));
       assertEquals(View.VISIBLE, navigation(activity.getWindow().getDecorView()).getVisibility());
     });
+  }
+
+  @Test public void historyLongPressSelectionExitsAtZeroWithoutRebuildingCards() {
+    seedHistory(8);
+    click("HISTORY");
+    settle();
+
+    View[] selectedCard = new View[1];
+    View[] additionalCard = new View[1];
+    int[] scrollPosition = new int[1];
+    instrumentation.runOnMainSync(
+        () -> {
+          ScrollView scroll = (ScrollView) field("currentScroll");
+          scroll.scrollTo(0, 300);
+          scrollPosition[0] = scroll.getScrollY();
+          selectedCard[0] = longClickableAncestor(find(scroll, "History test 4"));
+          assertTrue(selectedCard[0].performLongClick());
+        });
+    settle();
+
+    instrumentation.runOnMainSync(
+        () -> {
+          View decor = activity.getWindow().getDecorView();
+          View currentCard = longClickableAncestor(find(decor, "History test 4"));
+          assertSame("Selection must preserve the card view", selectedCard[0], currentCard);
+          assertTrue(currentCard.isSelected());
+          assertEquals("Selected", ViewCompat.getStateDescription(currentCard));
+          assertTrue(((View) field("historySelectionBar")).isShown());
+          assertNotNull(find(decor, "1 selected"));
+          assertEquals(scrollPosition[0], ((ScrollView) field("currentScroll")).getScrollY());
+          additionalCard[0] = longClickableAncestor(find(decor, "History test 5"));
+          assertTrue(additionalCard[0].performClick());
+        });
+    settle();
+
+    instrumentation.runOnMainSync(
+        () -> {
+          View decor = activity.getWindow().getDecorView();
+          View firstCard = longClickableAncestor(find(decor, "History test 4"));
+          View secondCard = longClickableAncestor(find(decor, "History test 5"));
+          assertSame(selectedCard[0], firstCard);
+          assertSame(additionalCard[0], secondCard);
+          assertTrue(firstCard.isSelected());
+          assertTrue(secondCard.isSelected());
+          assertNotNull(find(decor, "2 selected"));
+          assertEquals(scrollPosition[0], ((ScrollView) field("currentScroll")).getScrollY());
+          assertTrue(secondCard.performClick());
+        });
+    settle();
+
+    instrumentation.runOnMainSync(
+        () -> {
+          View decor = activity.getWindow().getDecorView();
+          View firstCard = longClickableAncestor(find(decor, "History test 4"));
+          assertTrue(firstCard.isSelected());
+          assertFalse(additionalCard[0].isSelected());
+          assertTrue(((View) field("historySelectionBar")).isShown());
+          assertNotNull(find(decor, "1 selected"));
+          assertTrue(firstCard.performClick());
+        });
+    settle();
+
+    instrumentation.runOnMainSync(
+        () -> {
+          View decor = activity.getWindow().getDecorView();
+          View currentCard = longClickableAncestor(find(decor, "History test 4"));
+          assertSame("Deselection must preserve the card view", selectedCard[0], currentCard);
+          assertFalse(currentCard.isSelected());
+          assertNull(ViewCompat.getStateDescription(currentCard));
+          assertFalse((Boolean) field("historySelectionMode"));
+          assertEquals(View.GONE, ((View) field("historySelectionBar")).getVisibility());
+          assertEquals("SELECT ALL", ((TextView) field("historySelectAction")).getText());
+          assertNull("Zero-selection UI must not remain visible", findShown(decor, "0 selected"));
+          assertEquals(scrollPosition[0], ((ScrollView) field("currentScroll")).getScrollY());
+        });
   }
 
   @Test public void themeChangesKeepTheActivityAndSettingsPage() {
@@ -275,6 +374,30 @@ public final class NavigationUiTest {
     return (EditText) fields.get(0);
   }
 
+  private void seedHistory(int count) {
+    Set<String> encoded = new HashSet<>();
+    for (int index = 0; index < count; index++) {
+      DownloadRecord record =
+          new DownloadRecord(
+              "test-history-" + index,
+              10_000L - index,
+              "com.airreload.test.missing." + index,
+              "History test " + index,
+              "1.0." + index,
+              index + 1,
+              "example.org",
+              DownloadOutcomes.DOWNLOADED,
+              "",
+              0);
+      encoded.add(DownloadRecordCodec.INSTANCE.encode(record));
+    }
+    State.prefs(instrumentation.getTargetContext())
+        .edit()
+        .putStringSet("download_history_v1", encoded)
+        .putBoolean("download_history_legacy_imported", true)
+        .commit();
+  }
+
   private void click(String text) {
     instrumentation.runOnMainSync(() -> clickAncestor(find(activity.getWindow().getDecorView(), text)));
   }
@@ -295,6 +418,20 @@ public final class NavigationUiTest {
       }
     }
     return null;
+  }
+
+  private View findShown(View root, String text) {
+    View match = find(root, text);
+    return match != null && match.isShown() ? match : null;
+  }
+
+  private View longClickableAncestor(View view) {
+    assertNotNull("Expected history item", view);
+    while (!view.isLongClickable() && view.getParent() instanceof View) {
+      view = (View) view.getParent();
+    }
+    assertTrue("History item must respond to a long press", view.isLongClickable());
+    return view;
   }
 
   private BottomNavigationView navigation(View root) {
