@@ -42,6 +42,7 @@ import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputMethodManager;
 import android.view.animation.PathInterpolator;
 import android.widget.Button;
+import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
@@ -66,6 +67,7 @@ import com.airreload.shared.history.DownloadRecord;
 import com.google.android.material.bottomnavigation.BottomNavigationView;
 import com.google.android.material.bottomsheet.BottomSheetBehavior;
 import com.google.android.material.bottomsheet.BottomSheetDialog;
+import com.google.android.material.materialswitch.MaterialSwitch;
 import com.google.android.material.shape.MaterialShapeDrawable;
 import java.text.DateFormat;
 import java.util.ArrayList;
@@ -132,6 +134,7 @@ public final class MainActivity extends AppCompatActivity {
   private String lastTerminalState = "";
   private boolean foreground;
   private boolean onboardingVisible;
+  private String promptedLaunchPackage;
   private String query = "";
 
   private ActivityResultLauncher<ScanOptions> scanner;
@@ -381,7 +384,7 @@ public final class MainActivity extends AppCompatActivity {
     }
     maybeAskNotificationsAndContinue();
     showPendingInstall(false);
-    State.prefs(this).edit().remove("pending_launch").apply();
+    maybeHandlePendingLaunch();
   }
 
   @Override
@@ -872,6 +875,13 @@ public final class MainActivity extends AppCompatActivity {
     String themeMode = State.prefs(this).getString("theme_mode", THEME_SYSTEM);
     appearance.addView(settingsRow("", "Theme", themeLabel(themeMode), view -> showThemeSheet()));
     root.addView(appearance);
+    root.addView(space(34));
+    root.addView(text("After installation", 14, MUTED, true));
+    root.addView(space(12));
+    LinearLayout afterInstallation = column();
+    afterInstallation.setBackground(outline(SURFACE, BORDER, 15));
+    afterInstallation.addView(autoOpenSettingsRow());
+    root.addView(afterInstallation);
     root.addView(space(34));
     root.addView(text("Permissions", 14, MUTED, true));
     root.addView(space(12));
@@ -1431,6 +1441,48 @@ public final class MainActivity extends AppCompatActivity {
     return item;
   }
 
+  private View autoOpenSettingsRow() {
+    LinearLayout item = row();
+    item.setGravity(Gravity.CENTER_VERTICAL);
+    item.setPadding(dp(20), dp(12), dp(14), dp(12));
+    LinearLayout labels = column();
+    labels.addView(text("Open installed apps automatically", 16, FOREST, false));
+    labels.addView(space(3));
+    TextView description =
+        text("Launch the app as soon as Android finishes installing it.", 13, MUTED, false);
+    description.setLineSpacing(dp(2), 1f);
+    labels.addView(description);
+    LinearLayout.LayoutParams labelsParams =
+        new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1);
+    labelsParams.setMarginEnd(dp(12));
+    item.addView(labels, labelsParams);
+    MaterialSwitch toggle = new MaterialSwitch(this);
+    toggle.setChecked(State.prefs(this).getBoolean(State.AUTO_OPEN_AFTER_INSTALL, false));
+    toggle.setClickable(false);
+    toggle.setFocusable(false);
+    toggle.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+    item.addView(toggle, new LinearLayout.LayoutParams(dp(52), dp(48)));
+    item.setMinimumHeight(dp(88));
+    item.setFocusable(true);
+    updateAutoOpenAccessibility(item, toggle.isChecked());
+    item.setOnClickListener(
+        view -> {
+          boolean enabled = !toggle.isChecked();
+          toggle.setChecked(enabled);
+          State.prefs(this).edit().putBoolean(State.AUTO_OPEN_AFTER_INSTALL, enabled).apply();
+          updateAutoOpenAccessibility(item, enabled);
+        });
+    return item;
+  }
+
+  private void updateAutoOpenAccessibility(View item, boolean enabled) {
+    item.setContentDescription(
+        "Open installed apps automatically. "
+            + (enabled ? "On." : "Off.")
+            + " Launch the app as soon as Android finishes installing it.");
+    ViewCompat.setStateDescription(item, enabled ? "On" : "Off");
+  }
+
   private View buildLibraryHeader() {
     LinearLayout row = row();
     row.setGravity(Gravity.CENTER_VERTICAL);
@@ -1776,6 +1828,7 @@ public final class MainActivity extends AppCompatActivity {
     refreshHistory();
     if (foreground) {
       showPendingInstall(false);
+      maybeHandlePendingLaunch();
     }
     String terminalKey = state.phase + "|" + state.message;
     if ("error".equals(state.phase) && !terminalKey.equals(lastTerminalState) && foreground) {
@@ -2028,6 +2081,168 @@ public final class MainActivity extends AppCompatActivity {
           "This app didn’t open",
           "Android could not launch it. It may have been removed or disabled.");
       refreshLibrary();
+    }
+  }
+
+  private void maybeHandlePendingLaunch() {
+    if (!foreground || isFinishing() || isDestroyed()) {
+      return;
+    }
+    String packageName = State.prefs(this).getString(State.PENDING_LAUNCH, "");
+    if (packageName.isEmpty() || packageName.equals(promptedLaunchPackage)) {
+      return;
+    }
+    Intent launchIntent = getPackageManager().getLaunchIntentForPackage(packageName);
+    PostInstallLaunch.Action action =
+        PostInstallLaunch.decide(
+            packageName,
+            State.prefs(this).getBoolean(State.AUTO_OPEN_AFTER_INSTALL, false),
+            launchIntent != null);
+    if (action == PostInstallLaunch.Action.OPEN) {
+      clearPendingLaunch(packageName);
+      openInstalledPackage(packageName, launchIntent, true);
+    } else if (action == PostInstallLaunch.Action.ASK) {
+      showInstallSuccessSheet(packageName, launchIntent);
+    } else if (action == PostInstallLaunch.Action.UNAVAILABLE) {
+      clearPendingLaunch(packageName);
+      showMessage(
+          "Installed successfully",
+          "This app doesn’t include a launcher screen, but it has been added to your library.");
+    }
+  }
+
+  private void showInstallSuccessSheet(String packageName, Intent launchIntent) {
+    promptedLaunchPackage = packageName;
+    String label = packageName;
+    Drawable appIcon = ContextCompat.getDrawable(this, android.R.drawable.sym_def_app_icon);
+    try {
+      ApplicationInfo info = getPackageManager().getApplicationInfo(packageName, 0);
+      label = getPackageManager().getApplicationLabel(info).toString();
+      appIcon = getPackageManager().getApplicationIcon(info);
+    } catch (PackageManager.NameNotFoundException ignored) {
+      // The package was installed, so use safe fallbacks if Android has not indexed it yet.
+    }
+
+    BottomSheetDialog sheet = new BottomSheetDialog(this);
+    LinearLayout content = sheetContent(sheet, "Installed successfully");
+    content.addView(space(12));
+
+    FrameLayout hero = new FrameLayout(this);
+    hero.setBackground(round(PALE_MINT, 24));
+    hero.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+    ImageView icon = new ImageView(this);
+    icon.setImageDrawable(appIcon);
+    FrameLayout.LayoutParams iconParams = new FrameLayout.LayoutParams(dp(72), dp(72), Gravity.CENTER);
+    hero.addView(icon, iconParams);
+    TextView check = text("✓", 16, Color.WHITE, true);
+    check.setGravity(Gravity.CENTER);
+    check.setBackground(round(GREEN, 20));
+    FrameLayout.LayoutParams checkParams =
+        new FrameLayout.LayoutParams(dp(34), dp(34), Gravity.CENTER);
+    checkParams.leftMargin = dp(58);
+    checkParams.topMargin = dp(58);
+    hero.addView(check, checkParams);
+    LinearLayout.LayoutParams heroParams =
+        new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(156));
+    content.addView(hero, heroParams);
+    content.addView(space(22));
+
+    TextView eyebrow = text("READY TO GO", 11, GREEN, true);
+    eyebrow.setLetterSpacing(.14f);
+    eyebrow.setGravity(Gravity.CENTER);
+    content.addView(eyebrow);
+    content.addView(space(8));
+    TextView title = text(label + " is ready", 27, FOREST, true);
+    title.setGravity(Gravity.CENTER);
+    title.setMaxLines(2);
+    ViewCompat.setAccessibilityHeading(title, true);
+    content.addView(title);
+    content.addView(space(9));
+    TextView message =
+        text("The installation finished successfully. You can jump straight into the app now.",
+            15, MUTED, false);
+    message.setGravity(Gravity.CENTER);
+    message.setLineSpacing(dp(3), 1f);
+    content.addView(message);
+    content.addView(space(22));
+
+    CheckBox remember = new CheckBox(this);
+    remember.setText("Always open apps after installation");
+    remember.setTextSize(15);
+    remember.setTextColor(FOREST);
+    remember.setButtonTintList(
+        new ColorStateList(
+            new int[][] {
+              new int[] {android.R.attr.state_checked},
+              new int[] {}
+            },
+            new int[] {GREEN, MUTED}));
+    remember.setPadding(dp(14), dp(8), dp(14), dp(8));
+    remember.setBackground(outline(CREAM, BORDER, 16));
+    remember.setChecked(State.prefs(this).getBoolean(State.AUTO_OPEN_AFTER_INSTALL, false));
+    remember.setOnCheckedChangeListener(
+        (buttonView, checked) ->
+            State.prefs(this).edit().putBoolean(State.AUTO_OPEN_AFTER_INSTALL, checked).apply());
+    content.addView(remember, new LinearLayout.LayoutParams(-1, dp(60)));
+    TextView hint = text("You can change this anytime in Settings.", 12, MUTED, false);
+    hint.setPadding(dp(14), dp(6), dp(14), 0);
+    content.addView(hint);
+    content.addView(space(20));
+
+    Button open = button("Open app", GREEN, Color.red(CREAM) > 128 ? Color.WHITE : CREAM);
+    content.addView(open, new LinearLayout.LayoutParams(-1, dp(56)));
+    content.addView(space(10));
+    Button later = button("Not now", CREAM, FOREST);
+    later.setBackground(outline(CREAM, BORDER, 16));
+    content.addView(later, new LinearLayout.LayoutParams(-1, dp(52)));
+
+    String appLabel = label;
+    open.setContentDescription("Open " + appLabel);
+    open.setOnClickListener(
+        view -> {
+          clearPendingLaunch(packageName);
+          sheet.setOnDismissListener(
+              dialog -> {
+                activeSheet = null;
+                promptedLaunchPackage = null;
+                if (!isFinishing() && !isDestroyed()) {
+                  openInstalledPackage(packageName, launchIntent, false);
+                }
+              });
+          sheet.dismiss();
+        });
+    later.setOnClickListener(view -> sheet.dismiss());
+    showSheet(sheet, content);
+    sheet.setOnDismissListener(
+        dialog -> {
+          if (activeSheet == sheet) activeSheet = null;
+          clearPendingLaunch(packageName);
+          promptedLaunchPackage = null;
+        });
+  }
+
+  private void openInstalledPackage(
+      String packageName, Intent launchIntent, boolean automatic) {
+    if (launchIntent == null) {
+      showMessage(
+          "Installed, but couldn’t open",
+          "This app doesn’t include a launcher screen. It is still saved in your library.");
+      return;
+    }
+    try {
+      startActivity(launchIntent);
+    } catch (RuntimeException exception) {
+      showMessage(
+          "Installed, but couldn’t open",
+          automatic
+              ? "Android couldn’t launch it automatically. Tap its card in your library to try again."
+              : "Android couldn’t launch it. Tap its card in your library to try again.");
+    }
+  }
+
+  private void clearPendingLaunch(String packageName) {
+    if (packageName.equals(State.prefs(this).getString(State.PENDING_LAUNCH, ""))) {
+      State.prefs(this).edit().remove(State.PENDING_LAUNCH).apply();
     }
   }
 
