@@ -137,6 +137,7 @@ public final class MainActivity extends AppCompatActivity {
   protected void onCreate(Bundle savedInstanceState) {
     applyThemePreference();
     super.onCreate(savedInstanceState);
+    syncLauncherIcon();
     configurePalette();
     WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
     configureSystemBars();
@@ -232,6 +233,7 @@ public final class MainActivity extends AppCompatActivity {
     State.prefs(this).edit().putString("theme_mode", mode).apply();
     applyingTheme = true;
     applyThemePreference();
+    syncLauncherIcon();
     applyingTheme = false;
     rebuildTheme();
   }
@@ -239,7 +241,13 @@ public final class MainActivity extends AppCompatActivity {
   @Override
   public void onConfigurationChanged(Configuration configuration) {
     super.onConfigurationChanged(configuration);
+    syncLauncherIcon();
     if (!applyingTheme && pageHost != null) rebuildTheme();
+  }
+
+  private void syncLauncherIcon() {
+    String mode = State.prefs(this).getString("theme_mode", THEME_SYSTEM);
+    LauncherIconController.sync(this, mode);
   }
 
   private void rebuildTheme() {
