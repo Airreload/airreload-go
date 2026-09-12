@@ -7,8 +7,32 @@
     <string name="notification_preparing">Preparing download…</string>
     <string name="notification_preparing_install">Preparing installation…</string>
     <string name="scanner_prompt">Center an APK QR code in the frame</string>
+    <string name="history_select_all">SELECT ALL</string>
+    <string name="history_clear_selection">CLEAR</string>
+    <string name="history_done">DONE</string>
+    <string name="history_delete">DELETE</string>
+    <string name="history_long_press_to_select">Long press to select</string>
+    <string name="history_item_selected">Selected</string>
+    <string name="history_item_not_selected">Not selected</string>
+    <string name="history_nothing_selected_title">Nothing selected</string>
+    <string name="history_nothing_selected_body">Select one or more downloads to delete.</string>
+    <string name="history_delete_message">This permanently removes the selected APK files and their history records, freeing up to %1$s. Apps already installed on this device will stay installed.</string>
+    <string name="history_keep">Keep</string>
+    <string name="history_deleted_title">Downloads deleted</string>
     <plurals name="library_app_count">
         <item quantity="one">%d app</item>
         <item quantity="other">%d apps</item>
+    </plurals>
+    <plurals name="history_selected_count">
+        <item quantity="one">%d selected</item>
+        <item quantity="other">%d selected</item>
+    </plurals>
+    <plurals name="history_delete_title">
+        <item quantity="one">Delete %d download?</item>
+        <item quantity="other">Delete %d downloads?</item>
+    </plurals>
+    <plurals name="history_deleted_body">
+        <item quantity="one">%d history item was removed.</item>
+        <item quantity="other">%d history items were removed.</item>
     </plurals>
 </resources>

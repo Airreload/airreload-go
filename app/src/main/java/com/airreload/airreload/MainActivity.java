@@ -1,6 +1,7 @@
 package com.airreload.airreload;
 
 import android.Manifest;
+import android.animation.ArgbEvaluator;
 import android.animation.ValueAnimator;
 import android.app.ActivityManager;
 import android.app.AlertDialog;
@@ -32,6 +33,7 @@ import android.text.TextWatcher;
 import android.transition.AutoTransition;
 import android.transition.TransitionManager;
 import android.view.Gravity;
+import android.view.HapticFeedbackConstants;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
@@ -107,11 +109,15 @@ public final class MainActivity extends AppCompatActivity {
   private View themeOverlay;
   private BottomSheetDialog activeSheet;
   private TextView libraryCount;
+  private LinearLayout historyRoot;
   private LinearLayout historyList;
   private LinearLayout historySelectionBar;
   private TextView historySummary;
   private TextView historySelectionCount;
   private TextView historySelectAction;
+  private TextView historySelectAllAction;
+  private View historyEmptyState;
+  private final Map<String, HistoryCardBinding> historyCards = new HashMap<>();
   private final Set<String> selectedHistory = new HashSet<>();
   private OnBackPressedCallback historyBack;
   private boolean historyPage;
@@ -156,7 +162,7 @@ public final class MainActivity extends AppCompatActivity {
           @Override
           public void handleOnBackPressed() {
             if (historySelectionMode) {
-              setHistorySelectionMode(false);
+              clearHistorySelection();
             } else {
               router.back();
             }
@@ -485,7 +491,10 @@ public final class MainActivity extends AppCompatActivity {
     search = null;
     scanButton = null;
     urlSubmit = null;
+    clearHistoryCardBindings();
+    historyRoot = null;
     historyList = null;
+    historyEmptyState = null;
     switch (router.current()) {
       case HOME: showHomePage(); break;
       case SETTINGS: showSettingsPage(); break;
@@ -890,6 +899,7 @@ public final class MainActivity extends AppCompatActivity {
     scroll.setFillViewport(true);
     scroll.setClipToPadding(false);
     MaxWidthColumn root = new MaxWidthColumn(this);
+    historyRoot = root;
     root.setOrientation(LinearLayout.VERTICAL);
     root.setPadding(dp(24), dp(18), dp(24), dp(32));
     scroll.addView(
@@ -915,13 +925,20 @@ public final class MainActivity extends AppCompatActivity {
         new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1);
     titleParams.setMarginStart(dp(14));
     header.addView(title, titleParams);
-    historySelectAction = text("SELECT", 11, GREEN, true);
+    historySelectAction = text(getString(R.string.history_select_all), 11, GREEN, true);
     historySelectAction.setLetterSpacing(.08f);
     historySelectAction.setGravity(Gravity.CENTER);
     historySelectAction.setFocusable(true);
     historySelectAction.setBackground(outline(SURFACE, BORDER, 10));
-    historySelectAction.setOnClickListener(view -> setHistorySelectionMode(!historySelectionMode));
-    header.addView(historySelectAction, new LinearLayout.LayoutParams(dp(76), dp(42)));
+    historySelectAction.setOnClickListener(
+        view -> {
+          if (historySelectionMode) {
+            clearHistorySelection();
+          } else {
+            toggleSelectAllHistory();
+          }
+        });
+    header.addView(historySelectAction, new LinearLayout.LayoutParams(dp(96), dp(42)));
     root.addView(header);
     root.addView(space(18));
 
@@ -941,17 +958,18 @@ public final class MainActivity extends AppCompatActivity {
     bar.setGravity(Gravity.CENTER_VERTICAL);
     bar.setPadding(dp(14), dp(8), dp(8), dp(8));
     bar.setBackground(outline(SURFACE, GREEN, 14));
-    historySelectionCount = text("0 selected", 14, FOREST, true);
+    historySelectionCount = text("", 14, FOREST, true);
+    historySelectionCount.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
     bar.addView(
         historySelectionCount,
         new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
-    TextView all = text("SELECT ALL", 11, GREEN, true);
-    all.setGravity(Gravity.CENTER);
-    all.setMinWidth(dp(96));
-    all.setMinHeight(dp(48));
-    all.setOnClickListener(view -> toggleSelectAllHistory());
-    bar.addView(all);
-    TextView delete = text("DELETE", 11, ERROR, true);
+    historySelectAllAction = text(getString(R.string.history_select_all), 11, GREEN, true);
+    historySelectAllAction.setGravity(Gravity.CENTER);
+    historySelectAllAction.setMinWidth(dp(96));
+    historySelectAllAction.setMinHeight(dp(48));
+    historySelectAllAction.setOnClickListener(view -> toggleSelectAllHistory());
+    bar.addView(historySelectAllAction);
+    TextView delete = text(getString(R.string.history_delete), 11, ERROR, true);
     delete.setGravity(Gravity.CENTER);
     delete.setMinWidth(dp(74));
     delete.setMinHeight(dp(48));
@@ -966,19 +984,18 @@ public final class MainActivity extends AppCompatActivity {
     return bar;
   }
 
-  private void setHistorySelectionMode(boolean enabled) {
-    historySelectionMode = enabled;
-    if (!enabled) {
-      selectedHistory.clear();
-    }
-    if (historyBack != null) {
-      historyBack.setEnabled(historyPage);
-    }
-    refreshHistory();
+  private void clearHistorySelection() {
+    selectedHistory.clear();
+    refreshHistory(true);
   }
 
   private void toggleSelectAllHistory() {
     List<DownloadRecord> entries = DownloadHistory.all(this);
+    Set<String> availableIds = new HashSet<>();
+    for (DownloadRecord entry : entries) {
+      availableIds.add(entry.getId());
+    }
+    selectedHistory.retainAll(availableIds);
     if (selectedHistory.size() == entries.size()) {
       selectedHistory.clear();
     } else {
@@ -987,27 +1004,47 @@ public final class MainActivity extends AppCompatActivity {
         selectedHistory.add(entry.getId());
       }
     }
-    refreshHistory();
+    refreshHistory(true);
   }
 
   private void toggleHistoryEntry(String id) {
     if (!selectedHistory.add(id)) {
       selectedHistory.remove(id);
     }
-    refreshHistory();
+    refreshHistory(true);
   }
 
   private void refreshHistory() {
+    refreshHistory(false);
+  }
+
+  private void refreshHistory(boolean animateSelection) {
     if (!historyPage || historyList == null) {
       return;
     }
     List<DownloadRecord> entries = DownloadHistory.all(this);
+    Set<String> availableIds = new HashSet<>();
     long bytes = 0;
     for (DownloadRecord entry : entries) {
+      availableIds.add(entry.getId());
       if (DownloadHistory.hasArtifact(this, entry)) {
         bytes += entry.getArtifactBytes();
       }
     }
+    selectedHistory.retainAll(availableIds);
+    boolean nextSelectionMode = !selectedHistory.isEmpty();
+    boolean selectionModeChanged = historySelectionMode != nextSelectionMode;
+    if (animateSelection
+        && selectionModeChanged
+        && historyRoot != null
+        && ViewCompat.isLaidOut(historyRoot)
+        && ValueAnimator.areAnimatorsEnabled()) {
+      AutoTransition transition = new AutoTransition();
+      transition.setDuration(220);
+      transition.setInterpolator(new PathInterpolator(.2f, 0f, 0f, 1f));
+      TransitionManager.beginDelayedTransition(historyRoot, transition);
+    }
+    historySelectionMode = nextSelectionMode;
     historySummary.setText(
         entries.isEmpty()
             ? "Validated APK downloads will appear here."
@@ -1018,45 +1055,91 @@ public final class MainActivity extends AppCompatActivity {
                 + " saved\nDelete saved APKs here without uninstalling their apps.");
     historySelectAction.setEnabled(!entries.isEmpty());
     historySelectAction.setAlpha(entries.isEmpty() ? .45f : 1f);
-    historySelectAction.setText(historySelectionMode ? "DONE" : "SELECT");
+    historySelectAction.setText(
+        historySelectionMode
+            ? getString(R.string.history_done)
+            : getString(R.string.history_select_all));
     historySelectionBar.setVisibility(historySelectionMode ? View.VISIBLE : View.GONE);
-    historySelectionCount.setText(
-        String.format(Locale.getDefault(), "%d selected", selectedHistory.size()));
+    if (historySelectionMode) {
+      int count = selectedHistory.size();
+      historySelectionCount.setText(
+          getResources().getQuantityString(R.plurals.history_selected_count, count, count));
+      historySelectAllAction.setText(
+          count == entries.size()
+              ? getString(R.string.history_clear_selection)
+              : getString(R.string.history_select_all));
+    }
 
-    historyList.removeAllViews();
     if (entries.isEmpty()) {
-      historySelectionMode = false;
-      selectedHistory.clear();
-      historySelectionBar.setVisibility(View.GONE);
-      historyList.addView(buildHistoryEmptyState());
+      clearHistoryCardBindings();
+      if (historyEmptyState == null) {
+        historyList.removeAllViews();
+        historyEmptyState = buildHistoryEmptyState();
+        historyList.addView(historyEmptyState);
+      }
       return;
     }
+    historyEmptyState = null;
+    boolean rebuildCards = historyCards.size() != entries.size();
+    List<Boolean> installedStates = new ArrayList<>(entries.size());
+    List<Boolean> artifactStates = new ArrayList<>(entries.size());
+    for (int index = 0; index < entries.size(); index++) {
+      DownloadRecord entry = entries.get(index);
+      boolean installed = isHistoryPackageInstalled(entry);
+      boolean hasArtifact = DownloadHistory.hasArtifact(this, entry);
+      installedStates.add(installed);
+      artifactStates.add(hasArtifact);
+      HistoryCardBinding binding = historyCards.get(entry.getId());
+      if (binding == null
+          || !binding.matches(entry, installed, hasArtifact)
+          || historyList.getChildCount() != entries.size()
+          || historyList.getChildAt(index) != binding.card) {
+        rebuildCards = true;
+      }
+    }
+    if (rebuildCards) {
+      clearHistoryCardBindings();
+      historyList.removeAllViews();
+      for (int index = 0; index < entries.size(); index++) {
+        DownloadRecord entry = entries.get(index);
+        HistoryCardBinding binding =
+            buildHistoryCard(entry, installedStates.get(index), artifactStates.get(index));
+        historyCards.put(entry.getId(), binding);
+        historyList.addView(binding.card, libraryCardParams());
+      }
+    }
     for (DownloadRecord entry : entries) {
-      historyList.addView(buildHistoryCard(entry), libraryCardParams());
+      updateHistoryCardSelection(
+          historyCards.get(entry.getId()),
+          selectedHistory.contains(entry.getId()),
+          historySelectionMode,
+          animateSelection);
     }
   }
 
-  private View buildHistoryCard(DownloadRecord entry) {
+  private HistoryCardBinding buildHistoryCard(
+      DownloadRecord entry, boolean installed, boolean hasArtifact) {
     LinearLayout card = row();
-    boolean selected = selectedHistory.contains(entry.getId());
     card.setGravity(Gravity.CENTER_VERTICAL);
     card.setPadding(dp(15), dp(15), dp(14), dp(15));
-    card.setBackground(outline(selected ? PALE_MINT : SURFACE, selected ? GREEN : BORDER, 17));
+    card.setBackground(outline(SURFACE, BORDER, 17));
     card.setMinimumHeight(dp(92));
+    card.setTag(entry.getId());
 
-    TextView selection = text(selected ? "✓" : "○", 22, selected ? GREEN : MUTED, true);
+    TextView selection = text("○", 22, MUTED, true);
     selection.setGravity(Gravity.CENTER);
-    selection.setVisibility(historySelectionMode ? View.VISIBLE : View.GONE);
+    selection.setVisibility(View.GONE);
+    selection.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
     card.addView(selection, new LinearLayout.LayoutParams(dp(40), dp(48)));
 
     Drawable drawable = ContextCompat.getDrawable(this, android.R.drawable.sym_def_app_icon);
-    boolean installed = false;
-    try {
-      ApplicationInfo info = getPackageManager().getApplicationInfo(entry.getPackageName(), 0);
-      drawable = getPackageManager().getApplicationIcon(info);
-      installed = true;
-    } catch (PackageManager.NameNotFoundException ignored) {
-      // The saved APK and metadata remain useful after the app is removed.
+    if (installed) {
+      try {
+        ApplicationInfo info = getPackageManager().getApplicationInfo(entry.getPackageName(), 0);
+        drawable = getPackageManager().getApplicationIcon(info);
+      } catch (PackageManager.NameNotFoundException ignored) {
+        // A package can disappear between refreshing the list and loading its icon.
+      }
     }
     ImageView icon = new ImageView(this);
     icon.setImageDrawable(drawable);
@@ -1077,21 +1160,14 @@ public final class MainActivity extends AppCompatActivity {
             true);
     name.setMaxLines(2);
     details.addView(name);
-    details.addView(text(historyMetadata(entry), 12, MUTED, false));
-    String state = historyState(entry, installed);
+    details.addView(text(historyMetadata(entry, hasArtifact), 12, MUTED, false));
+    String state = historyState(entry, installed, hasArtifact);
     details.addView(text(state, 12, installed ? GREEN : MUTED, true));
 
-    if (!historySelectionMode) {
-      TextView saved = text(DownloadHistory.hasArtifact(this, entry) ? "APK" : "LOG", 10, MUTED, true);
-      saved.setGravity(Gravity.CENTER);
-      saved.setBackground(round(PALE_MINT, 10));
-      card.addView(saved, new LinearLayout.LayoutParams(dp(44), dp(30)));
-    }
-    card.setContentDescription(
-        (selected ? "Selected. " : "")
-            + (entry.getLabel().isEmpty() ? entry.getPackageName() : entry.getLabel())
-            + ". "
-            + state);
+    TextView saved = text(hasArtifact ? "APK" : "LOG", 10, MUTED, true);
+    saved.setGravity(Gravity.CENTER);
+    saved.setBackground(round(PALE_MINT, 10));
+    card.addView(saved, new LinearLayout.LayoutParams(dp(44), dp(30)));
     card.setFocusable(true);
     card.setOnClickListener(
         view -> {
@@ -1102,12 +1178,124 @@ public final class MainActivity extends AppCompatActivity {
     card.setOnLongClickListener(
         view -> {
           if (!historySelectionMode) {
-            historySelectionMode = true;
+            view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
           }
           toggleHistoryEntry(entry.getId());
           return true;
         });
-    return card;
+    card.setClickable(false);
+    String label = entry.getLabel().isEmpty() ? entry.getPackageName() : entry.getLabel();
+    card.setContentDescription(label + ". " + state);
+    return new HistoryCardBinding(
+        entry, installed, hasArtifact, card, selection, saved, label, state);
+  }
+
+  private boolean isHistoryPackageInstalled(DownloadRecord entry) {
+    try {
+      getPackageManager().getApplicationInfo(entry.getPackageName(), 0);
+      return true;
+    } catch (PackageManager.NameNotFoundException ignored) {
+      return false;
+    }
+  }
+
+  private void updateHistoryCardSelection(
+      HistoryCardBinding binding, boolean selected, boolean selectionMode, boolean animate) {
+    boolean selectionChanged = binding.selected != selected;
+    boolean modeChanged = binding.selectionMode != selectionMode;
+    binding.selected = selected;
+    binding.selectionMode = selectionMode;
+    binding.card.setSelected(selected);
+    binding.card.setClickable(selectionMode);
+    binding.selection.setText(selected ? "✓" : "○");
+    binding.selection.setTextColor(selected ? GREEN : MUTED);
+    binding.selection.setVisibility(selectionMode ? View.VISIBLE : View.GONE);
+    binding.saved.setVisibility(selectionMode ? View.GONE : View.VISIBLE);
+    binding.card.setContentDescription(
+        binding.label
+            + ". "
+            + binding.state
+            + (selectionMode ? "" : ". " + getString(R.string.history_long_press_to_select)));
+    ViewCompat.setStateDescription(
+        binding.card,
+        selectionMode
+            ? getString(
+                selected ? R.string.history_item_selected : R.string.history_item_not_selected)
+            : null);
+
+    int startFill = selected ? SURFACE : PALE_MINT;
+    int endFill = selected ? PALE_MINT : SURFACE;
+    int startStroke = selected ? BORDER : GREEN;
+    int endStroke = selected ? GREEN : BORDER;
+    boolean shouldAnimate =
+        animate
+            && selectionChanged
+            && ValueAnimator.areAnimatorsEnabled()
+            && ViewCompat.isLaidOut(binding.card);
+    if (binding.backgroundAnimator != null) {
+      binding.backgroundAnimator.cancel();
+      binding.backgroundAnimator = null;
+    }
+    if (shouldAnimate) {
+      ArgbEvaluator colors = new ArgbEvaluator();
+      ValueAnimator background = ValueAnimator.ofFloat(0f, 1f);
+      background.setDuration(220);
+      background.setInterpolator(new PathInterpolator(.2f, 0f, 0f, 1f));
+      background.addUpdateListener(
+          animator -> {
+            float progress = (float) animator.getAnimatedValue();
+            int fill = (int) colors.evaluate(progress, startFill, endFill);
+            int stroke = (int) colors.evaluate(progress, startStroke, endStroke);
+            binding.card.setBackground(outline(fill, stroke, 17));
+          });
+      binding.backgroundAnimator = background;
+      background.start();
+
+      binding.card.animate().cancel();
+      binding.card.setScaleX(.985f);
+      binding.card.setScaleY(.985f);
+      binding
+          .card
+          .animate()
+          .scaleX(1f)
+          .scaleY(1f)
+          .setDuration(180)
+          .setInterpolator(new PathInterpolator(.2f, 0f, 0f, 1f))
+          .start();
+      if (selectionMode) {
+        binding.selection.animate().cancel();
+        binding.selection.setAlpha(.35f);
+        binding.selection.setScaleX(.72f);
+        binding.selection.setScaleY(.72f);
+        binding
+            .selection
+            .animate()
+            .alpha(1f)
+            .scaleX(1f)
+            .scaleY(1f)
+            .setDuration(180)
+            .setInterpolator(new PathInterpolator(.2f, 0f, 0f, 1f))
+            .start();
+      }
+    } else {
+      binding.card.setBackground(outline(endFill, endStroke, 17));
+      if (modeChanged) {
+        binding.selection.setAlpha(1f);
+        binding.selection.setScaleX(1f);
+        binding.selection.setScaleY(1f);
+      }
+    }
+  }
+
+  private void clearHistoryCardBindings() {
+    for (HistoryCardBinding binding : historyCards.values()) {
+      if (binding.backgroundAnimator != null) {
+        binding.backgroundAnimator.cancel();
+      }
+      binding.card.animate().cancel();
+      binding.selection.animate().cancel();
+    }
+    historyCards.clear();
   }
 
   private View buildHistoryEmptyState() {
@@ -1130,7 +1318,7 @@ public final class MainActivity extends AppCompatActivity {
     return empty;
   }
 
-  private String historyMetadata(DownloadRecord entry) {
+  private String historyMetadata(DownloadRecord entry, boolean hasArtifact) {
     List<String> parts = new ArrayList<>();
     if (!entry.getVersionName().isEmpty()) {
       parts.add("v" + entry.getVersionName());
@@ -1144,7 +1332,7 @@ public final class MainActivity extends AppCompatActivity {
     } else {
       parts.add("Saved before history was added");
     }
-    if (DownloadHistory.hasArtifact(this, entry)) {
+    if (hasArtifact) {
       parts.add(formatBytes(entry.getArtifactBytes()));
     }
     if (!entry.getSourceHost().isEmpty()) {
@@ -1153,8 +1341,7 @@ public final class MainActivity extends AppCompatActivity {
     return String.join(" · ", parts);
   }
 
-  private String historyState(DownloadRecord entry, boolean installed) {
-    boolean saved = DownloadHistory.hasArtifact(this, entry);
+  private String historyState(DownloadRecord entry, boolean installed, boolean saved) {
     if (installed) {
       return saved ? "Installed · APK saved" : "Installed · history only";
     }
@@ -1172,7 +1359,9 @@ public final class MainActivity extends AppCompatActivity {
 
   private void confirmHistoryDeletion() {
     if (selectedHistory.isEmpty()) {
-      showMessage("Nothing selected", "Select one or more downloads to delete.");
+      showMessage(
+          getString(R.string.history_nothing_selected_title),
+          getString(R.string.history_nothing_selected_body));
       return;
     }
     List<DownloadRecord> entries = DownloadHistory.all(this);
@@ -1185,23 +1374,19 @@ public final class MainActivity extends AppCompatActivity {
     int count = selectedHistory.size();
     long selectedBytes = bytes;
     new AlertDialog.Builder(this)
-        .setTitle("Delete " + count + (count == 1 ? " download?" : " downloads?"))
-        .setMessage(
-            "This permanently removes the selected APK files and their history records, freeing up to "
-                + formatBytes(selectedBytes)
-                + ". Apps already installed on this device will stay installed.")
-        .setNegativeButton("Keep", null)
+        .setTitle(getResources().getQuantityString(R.plurals.history_delete_title, count, count))
+        .setMessage(getString(R.string.history_delete_message, formatBytes(selectedBytes)))
+        .setNegativeButton(R.string.history_keep, null)
         .setPositiveButton(
-            "Delete",
+            getString(R.string.history_delete),
             (dialog, which) -> {
               int removed = DownloadHistory.delete(this, new HashSet<>(selectedHistory));
               selectedHistory.clear();
-              historySelectionMode = false;
-              refreshHistory();
+              refreshHistory(true);
               showMessage(
-                  "Downloads deleted",
-                  removed
-                      + (removed == 1 ? " history item was removed." : " history items were removed."));
+                  getString(R.string.history_deleted_title),
+                  getResources()
+                      .getQuantityString(R.plurals.history_deleted_body, removed, removed));
             })
         .show();
   }
@@ -2020,6 +2205,46 @@ public final class MainActivity extends AppCompatActivity {
       canvas.drawLine(168, 53, 174, 60, paint);
       canvas.drawLine(180, 53, 174, 60, paint);
       canvas.restore();
+    }
+  }
+
+  private static final class HistoryCardBinding {
+    final DownloadRecord entry;
+    final boolean installed;
+    final boolean hasArtifact;
+    final LinearLayout card;
+    final TextView selection;
+    final TextView saved;
+    final String label;
+    final String state;
+    boolean selected;
+    boolean selectionMode;
+    ValueAnimator backgroundAnimator;
+
+    HistoryCardBinding(
+        DownloadRecord entry,
+        boolean installed,
+        boolean hasArtifact,
+        LinearLayout card,
+        TextView selection,
+        TextView saved,
+        String label,
+        String state) {
+      this.entry = entry;
+      this.installed = installed;
+      this.hasArtifact = hasArtifact;
+      this.card = card;
+      this.selection = selection;
+      this.saved = saved;
+      this.label = label;
+      this.state = state;
+    }
+
+    boolean matches(
+        DownloadRecord candidate, boolean candidateInstalled, boolean candidateHasArtifact) {
+      return entry.equals(candidate)
+          && installed == candidateInstalled
+          && hasArtifact == candidateHasArtifact;
     }
   }
 
