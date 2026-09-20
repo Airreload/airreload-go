@@ -10,8 +10,12 @@ final class AppUiState {
     this.phase = phase;
     this.message = message;
     this.progress = progress;
-    this.busy =
-        "downloading".equals(phase)
+    this.busy = isBusy(phase);
+  }
+
+  static boolean isBusy(String phase) {
+    return "pairing".equals(phase)
+            || "downloading".equals(phase)
             || "installing".equals(phase)
             || "awaiting_install".equals(phase);
   }

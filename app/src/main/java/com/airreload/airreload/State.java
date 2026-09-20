@@ -30,9 +30,7 @@ final class State {
 
   static boolean busy(Context context) {
     String phase = prefs(context).getString("phase", "idle");
-    return "downloading".equals(phase)
-        || "installing".equals(phase)
-        || "awaiting_install".equals(phase);
+    return AppUiState.isBusy(phase);
   }
 
   static void recordInstalled(Context context, String packageName) {

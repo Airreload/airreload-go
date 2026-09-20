@@ -21,6 +21,9 @@ public final class AppStateViewModel extends AndroidViewModel {
 
   private final MutableLiveData<AppUiState> state = new MutableLiveData<>();
   private final Handler handler = new Handler(Looper.getMainLooper());
+  private Thread pairingWorker;
+  private int pairingGeneration;
+  private String pendingDownload;
   private final BroadcastReceiver stateChanges =
       new BroadcastReceiver() {
         @Override
@@ -58,7 +61,59 @@ public final class AppStateViewModel extends AndroidViewModel {
     packages.addDataScheme("package");
     ContextCompat.registerReceiver(
         application, packageChanges, packages, ContextCompat.RECEIVER_EXPORTED);
+    if ("pairing".equals(State.prefs(application).getString("phase", ""))) {
+      State.update(application, "error",
+          "Pairing was interrupted. Restart Airreload on your computer and scan the new code.", 0);
+    }
     refreshNow();
+  }
+
+  void startPairing(PairingUrl pairing) {
+    cancelPairing();
+    final int generation = pairingGeneration;
+    State.prefs(getApplication()).edit()
+        .remove("package").remove("package_baseline_update").apply();
+    State.update(getApplication(), "pairing", "Connecting to " + pairing.source() + "…", -1);
+    pairingWorker = PairingClient.pair(pairing, new PairingClient.Callback() {
+      @Override public void building(String message) {
+        handler.post(() -> {
+          if (generation != pairingGeneration) return;
+          State.update(getApplication(), "pairing", message, -1);
+        });
+      }
+
+      @Override public void ready(String downloadUrl) {
+        handler.post(() -> {
+          if (generation != pairingGeneration) return;
+          pairingWorker = null;
+          pendingDownload = downloadUrl;
+          State.update(getApplication(), "idle", "Your Airreload debug APK is ready to download.", 0);
+          refreshNow();
+        });
+      }
+
+      @Override public void failed(String message) {
+        handler.post(() -> {
+          if (generation != pairingGeneration) return;
+          pairingWorker = null;
+          State.update(getApplication(), "error", message, 0);
+        });
+      }
+    });
+    refreshNow();
+  }
+
+  void cancelPairing() {
+    pairingGeneration++;
+    if (pairingWorker != null) pairingWorker.interrupt();
+    pairingWorker = null;
+    pendingDownload = null;
+  }
+
+  String takePendingDownload() {
+    String result = pendingDownload;
+    pendingDownload = null;
+    return result;
   }
 
   LiveData<AppUiState> state() {
@@ -81,7 +136,7 @@ public final class AppStateViewModel extends AndroidViewModel {
 
   private void reconcileActiveInstall() {
     Context context = getApplication();
-    if (!State.busy(context)) {
+    if (!State.busy(context) || "pairing".equals(State.prefs(context).getString("phase", ""))) {
       return;
     }
     String packageName = State.prefs(context).getString("package", "");
@@ -116,6 +171,7 @@ public final class AppStateViewModel extends AndroidViewModel {
 
   @Override
   protected void onCleared() {
+    cancelPairing();
     handler.removeCallbacksAndMessages(null);
     getApplication().unregisterReceiver(stateChanges);
     getApplication().unregisterReceiver(packageChanges);

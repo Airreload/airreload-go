@@ -1,7 +1,7 @@
 # Airreload Go
 
-Airreload Go is an Android companion app for downloading and installing signed,
-standalone APKs from a QR code or URL. Android remains in control of every
+Airreload Go pairs with the Airreload CLI through a pairing QR code or a pasted
+pairing link, then downloads and installs the session's APK. Android remains in control of every
 installation and always asks for confirmation before an app is installed.
 
 > **Beta:** The current release is `1.1.0-beta.1` (`versionCode 4`).
@@ -9,7 +9,7 @@ installation and always asks for confirmation before an app is installed.
 ## Requirements
 
 - Android 8.0 (API 26) or newer
-- A signed, standalone APK
+- Airreload CLI running on a computer on the same trusted network
 - Permission for Airreload Go to install unknown apps
 
 Airreload Go does not support Android App Bundles (`.aab`), split APK sets,
@@ -17,8 +17,9 @@ Airreload Go does not support Android App Bundles (`.aab`), split APK sets,
 
 ## Using the app
 
-1. Scan an APK QR code or paste its HTTP or HTTPS URL.
-2. Review the source and tap **Download and review**.
+1. Scan the pairing QR from `airreload run` or paste its pairing link.
+2. Review the computer and tap **Pair and download**. Go waits for the build,
+   then downloads the APK automatically.
 3. If prompted, allow Airreload Go to install apps from this source.
 4. Review Android's installation screen and tap **Install**.
 
@@ -28,6 +29,22 @@ changed later under **Settings → After installation**.
 
 Installed apps appear in the **Apps** list. Validated downloads remain in
 **History** until you delete them.
+
+### Pairing with Airreload CLI
+
+When a QR comes from `airreload run`, Airreload Go identifies it as a pairing
+code rather than an APK link. After you explicitly confirm pairing, Go reports
+Android's `Build.SUPPORTED_ABIS` list to the local CLI. The CLI selects the
+best Flutter target (`arm64-v8a`, then `armeabi-v7a`, then `x86_64`), builds
+only that debug APK, and sends Go an authorized one-time download instruction.
+The **Pair and download** confirmation authorizes Go to download this session's
+APK automatically when ready. Android still requires its regular installation
+approval. Direct APK links, ordinary URLs, and unrelated QR codes are rejected
+without starting a download or pairing request.
+
+Pairing codes expire with the CLI session and accept one phone. Local HTTP is
+used only for this pre-build handshake, so use it only on a trusted development
+network. Both the scanner and manual entry accept pairing links only.
 
 ## Build from source
 

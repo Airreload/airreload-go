@@ -127,6 +127,12 @@ public final class MainActivity extends AppCompatActivity {
   private EditText search;
   private Button scanButton;
   private Button urlSubmit;
+  private LinearLayout flowStatus;
+  private ProgressBar flowSpinner;
+  private ProgressBar flowProgress;
+  private TextView flowTitle;
+  private TextView flowDetail;
+  private TextView flowAction;
   private boolean urlExpanded;
   private String urlDraft = "";
   private AppStateViewModel appState;
@@ -146,6 +152,10 @@ public final class MainActivity extends AppCompatActivity {
   protected void onCreate(Bundle savedInstanceState) {
     applyThemePreference();
     super.onCreate(savedInstanceState);
+    // Do not resume a direct APK URL saved by versions before pairing-only mode.
+    if (!State.prefs(this).getBoolean("queued_from_pairing", false)) {
+      State.prefs(this).edit().remove("queued_url").apply();
+    }
     syncLauncherIcon();
     configurePalette();
     WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
@@ -350,7 +360,7 @@ public final class MainActivity extends AppCompatActivity {
                   State.update(
                       this,
                       "idle",
-                      "All set. Scan an APK QR code whenever you’re ready.",
+                      "All set. Scan an Airreload pairing QR code whenever you’re ready.",
                       0);
                 }
                 maybeAskNotificationsAndContinue();
@@ -401,6 +411,8 @@ public final class MainActivity extends AppCompatActivity {
   }
 
   private void recoverInterruptedFlow() {
+    // Pairing has no Android install session; the ViewModel owns its lifetime.
+    if ("pairing".equals(State.prefs(this).getString("phase", ""))) return;
     if (!State.busy(this)) {
       return;
     }
@@ -502,6 +514,7 @@ public final class MainActivity extends AppCompatActivity {
     search = null;
     scanButton = null;
     urlSubmit = null;
+    flowStatus = null;
     clearHistoryCardBindings();
     historyRoot = null;
     historyList = null;
@@ -566,6 +579,8 @@ public final class MainActivity extends AppCompatActivity {
             ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
 
     root.addView(buildActionCard());
+    root.addView(buildFlowStatus());
+    refreshFlowStatus();
     root.addView(space(30));
     root.addView(buildLibraryHeader());
     root.addView(space(12));
@@ -594,6 +609,74 @@ public final class MainActivity extends AppCompatActivity {
     return header;
   }
 
+  private View buildFlowStatus() {
+    flowStatus = column();
+    LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, -2);
+    params.topMargin = dp(12);
+    flowStatus.setLayoutParams(params);
+    flowStatus.setPadding(dp(14), dp(6), dp(4), dp(6));
+    LinearLayout line = row();
+    line.setGravity(Gravity.CENTER_VERTICAL);
+    flowSpinner = new ProgressBar(this, null, android.R.attr.progressBarStyleSmall);
+    flowSpinner.setIndeterminateTintList(ColorStateList.valueOf(GREEN));
+    flowSpinner.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+    LinearLayout.LayoutParams spinnerParams = new LinearLayout.LayoutParams(dp(18), dp(18));
+    spinnerParams.setMarginEnd(dp(12));
+    line.addView(flowSpinner, spinnerParams);
+    LinearLayout copy = column();
+    flowTitle = text("", 13, GREEN, true);
+    flowTitle.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
+    flowDetail = text("", 12, MUTED, false);
+    copy.addView(flowTitle);
+    copy.addView(flowDetail);
+    line.addView(copy, new LinearLayout.LayoutParams(0, -2, 1));
+    flowAction = text("×", 24, MUTED, false);
+    flowAction.setGravity(Gravity.CENTER);
+    flowAction.setFocusable(true);
+    flowAction.setOnClickListener(view -> {
+      if ("error".equals(currentState.phase)) {
+        State.update(this, "idle", "", 0);
+        refreshStatus();
+      } else {
+        cancelCurrentFlow();
+      }
+    });
+    line.addView(flowAction, new LinearLayout.LayoutParams(dp(48), dp(48)));
+    flowStatus.addView(line);
+    flowProgress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+    flowProgress.setProgressTintList(ColorStateList.valueOf(GREEN));
+    flowProgress.setProgressBackgroundTintList(ColorStateList.valueOf(BORDER));
+    LinearLayout.LayoutParams progressParams = new LinearLayout.LayoutParams(-1, dp(3));
+    progressParams.setMarginEnd(dp(10));
+    progressParams.bottomMargin = dp(4);
+    flowStatus.addView(flowProgress, progressParams);
+    return flowStatus;
+  }
+
+  private void refreshFlowStatus() {
+    if (flowStatus == null) return;
+    boolean pairing = "pairing".equals(currentState.phase);
+    boolean downloading = "downloading".equals(currentState.phase);
+    boolean error = "error".equals(currentState.phase);
+    flowStatus.setVisibility(pairing || downloading || error ? View.VISIBLE : View.GONE);
+    if (!pairing && !downloading && !error) return;
+    String title = error ? "Something went wrong"
+        : pairing ? "Pairing…"
+        : currentState.progress >= 0 ? "Downloading · " + currentState.progress + "%" : "Downloading…";
+    if (!title.contentEquals(flowTitle.getText())) flowTitle.setText(title);
+    flowTitle.setTextColor(error ? ERROR : GREEN);
+    String detail = currentState.message;
+    if (!detail.contentEquals(flowDetail.getText())) flowDetail.setText(detail);
+    flowDetail.setVisibility(detail.isEmpty() ? View.GONE : View.VISIBLE);
+    flowDetail.setTextColor(error ? ERROR : MUTED);
+    flowStatus.setBackground(round(error ? ERROR_BG : PALE_MINT, 12));
+    flowSpinner.setVisibility(error ? View.GONE : View.VISIBLE);
+    flowProgress.setVisibility(downloading ? View.VISIBLE : View.GONE);
+    flowProgress.setIndeterminate(currentState.progress < 0);
+    flowProgress.setProgress(Math.max(0, currentState.progress));
+    flowAction.setContentDescription(error ? "Dismiss error" : pairing ? "Cancel pairing" : "Cancel download");
+  }
+
   private View buildActionCard() {
     LinearLayout card = column();
     card.setBackground(outline(SURFACE, BORDER, 15));
@@ -620,7 +703,7 @@ public final class MainActivity extends AppCompatActivity {
     });
     card.addView(divider());
 
-    scanButton = actionButton("Scan QR code", R.drawable.ic_qr_code);
+    scanButton = actionButton("Scan pairing QR code", R.drawable.ic_qr_code);
     scanButton.setOnClickListener(view -> requestCameraAndScan());
     card.addView(scanButton, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(60)));
     return card;
@@ -674,8 +757,8 @@ public final class MainActivity extends AppCompatActivity {
     content.setPadding(dp(20), dp(4), dp(20), dp(20));
     EditText input = new EditText(this);
     input.setSingleLine(true);
-    input.setHint("https://example.com/app.apk");
-    input.setContentDescription("App download URL");
+    input.setHint("Paste your Airreload pairing link");
+    input.setContentDescription("Airreload pairing URL");
     input.setText(urlDraft);
     input.setTextSize(16);
     input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
@@ -702,7 +785,7 @@ public final class MainActivity extends AppCompatActivity {
       @Override public void afterTextChanged(Editable value) {}
     });
     content.addView(space(14));
-    Button submit = button("Download app", GREEN, Color.red(CREAM) > 128 ? Color.WHITE : CREAM);
+    Button submit = button("Pair with computer", GREEN, Color.red(CREAM) > 128 ? Color.WHITE : CREAM);
     urlSubmit = submit;
     submit.setEnabled(!currentState.busy);
     submit.setAlpha(currentState.busy ? .48f : 1f);
@@ -711,10 +794,9 @@ public final class MainActivity extends AppCompatActivity {
       if (!ready()) return;
       String link = input.getText().toString().trim();
       try {
-        if (link.isEmpty()) throw new IllegalArgumentException("Enter an app URL.");
-        ApkUrl.parse(link);
+        PairingUrl.parse(link);
       } catch (IllegalArgumentException invalid) {
-        error.setText(link.isEmpty() ? "Enter an app URL." : "Enter a valid HTTP or HTTPS app URL.");
+        error.setText("Enter an Airreload pairing link. Direct APK links are not supported.");
         error.setVisibility(View.VISIBLE);
         input.setBackground(outline(CREAM, ERROR, 16));
         return;
@@ -1667,46 +1749,51 @@ public final class MainActivity extends AppCompatActivity {
     if (!ready()) {
       return;
     }
-    State.prefs(this).edit().remove("queued_url").apply();
     try {
-      java.net.URI url = ApkUrl.parse(raw);
-      BottomSheetDialog sheet = new BottomSheetDialog(this);
-      LinearLayout content = sheetContent(sheet, "Confirm download");
-      content.addView(space(20));
-      TextView source = text(url.getScheme() + "://" + url.getRawAuthority(), 18, FOREST, true);
-      source.setTextDirection(View.TEXT_DIRECTION_LTR);
-      source.setTextIsSelectable(true);
-      content.addView(source);
-      content.addView(space(12));
-      content.addView(text("Download an APK from this source? Android will ask you to approve installation.",
-          15, MUTED, false));
-      if ("http".equalsIgnoreCase(url.getScheme())) {
-        content.addView(space(12));
-        content.addView(text("This connection is unencrypted. Use it only on a trusted development network.",
-            14, ERROR, false));
-      }
-      content.addView(space(24));
-      Button confirm = button("Download and review", GREEN, Color.red(CREAM) > 128 ? Color.WHITE : CREAM);
-      confirm.setOnClickListener(view -> {
-        confirm.setEnabled(false);
-        sheet.setOnDismissListener(dialog -> {
-          activeSheet = null;
-          if (isFinishing() || isDestroyed() || !ready()) return;
-          State.prefs(this).edit().putString("queued_url", url.toString()).apply();
-          if (!getPackageManager().canRequestPackageInstalls()) {
-            openInstallSettings();
-          } else {
-            maybeAskNotificationsAndContinue();
-          }
-        });
-        sheet.dismiss();
-      });
-      content.addView(confirm, new LinearLayout.LayoutParams(-1, dp(56)));
-      showSheet(sheet, content);
+      PairingUrl pairing = PairingUrl.parse(raw);
+      State.prefs(this).edit().remove("queued_url").remove("queued_from_pairing").apply();
+      confirmPairing(pairing);
     } catch (IllegalArgumentException exception) {
-      State.update(this, "error", exception.getMessage(), 0);
+      State.update(this, "error",
+          "Use an Airreload pairing QR code or pairing link. Direct APK links and other codes are not supported.", 0);
     }
     refreshStatus();
+  }
+
+  private void confirmPairing(PairingUrl pairing) {
+    BottomSheetDialog sheet = new BottomSheetDialog(this);
+    LinearLayout content = sheetContent(sheet, "Confirm pairing");
+    content.addView(space(20));
+    TextView source = text(pairing.source(), 18, FOREST, true);
+    source.setTextDirection(View.TEXT_DIRECTION_LTR);
+    source.setTextIsSelectable(true);
+    content.addView(source);
+    content.addView(space(12));
+    content.addView(
+        text(
+            "Pair with this Airreload computer? It will build an APK for your phone, and Airreload Go will automatically download it when ready. Android will still ask you to approve installation.",
+            15,
+            MUTED,
+            false));
+    if ("http".equalsIgnoreCase(pairing.uri().getScheme())) {
+      content.addView(space(12));
+      content.addView(
+          text(
+              "Pairing uses an unencrypted local-network connection. Confirm only on a trusted development network.",
+              14,
+              ERROR,
+              false));
+    }
+    content.addView(space(24));
+    Button confirm = button("Pair and download", GREEN, Color.red(CREAM) > 128 ? Color.WHITE : CREAM);
+    confirm.setOnClickListener(
+        view -> {
+          confirm.setEnabled(false);
+          sheet.dismiss();
+          appState.startPairing(pairing);
+        });
+    content.addView(confirm, new LinearLayout.LayoutParams(-1, dp(56)));
+    showSheet(sheet, content);
   }
 
   private void openInstallSettings() {
@@ -1731,8 +1818,25 @@ public final class MainActivity extends AppCompatActivity {
     }
   }
 
+  private void queueAuthorizedDownload(String link) {
+    if (!ready() || isFinishing() || isDestroyed()) return;
+    try {
+      String url = ApkUrl.parse(link).toString();
+      State.prefs(this).edit().putString("queued_url", url)
+          .putBoolean("queued_from_pairing", true).apply();
+      if (!getPackageManager().canRequestPackageInstalls()) {
+        openInstallSettings();
+      } else {
+        maybeAskNotificationsAndContinue();
+      }
+    } catch (IllegalArgumentException exception) {
+      State.update(this, "error", exception.getMessage(), 0);
+    }
+  }
+
   private void maybeAskNotificationsAndContinue() {
     if (State.prefs(this).getString("queued_url", null) == null
+        || !State.prefs(this).getBoolean("queued_from_pairing", false)
         || State.busy(this)
         || !getPackageManager().canRequestPackageInstalls()) {
       return;
@@ -1750,12 +1854,14 @@ public final class MainActivity extends AppCompatActivity {
 
   private void continueQueuedDownload() {
     String url = State.prefs(this).getString("queued_url", null);
-    if (url == null || State.busy(this) || !getPackageManager().canRequestPackageInstalls()) {
+    if (url == null || !State.prefs(this).getBoolean("queued_from_pairing", false)
+        || State.busy(this) || !getPackageManager().canRequestPackageInstalls()) {
       return;
     }
     State.prefs(this)
         .edit()
         .remove("queued_url")
+        .remove("queued_from_pairing")
         .remove("session")
         .remove("package")
         .remove("package_baseline_update")
@@ -1800,6 +1906,7 @@ public final class MainActivity extends AppCompatActivity {
   }
 
   private void cancelCurrentFlow() {
+    appState.cancelPairing();
     stopService(new Intent(this, InstallService.class));
     Installer.cancel(this);
     State.update(this, "idle", "Cancelled. Nothing was added to your library.", 0);
@@ -1816,6 +1923,7 @@ public final class MainActivity extends AppCompatActivity {
       return;
     }
     currentState = state;
+    refreshFlowStatus();
     if (scanButton != null) {
       scanButton.setEnabled(!state.busy);
       scanButton.setAlpha(state.busy ? .48f : 1f);
@@ -1827,13 +1935,16 @@ public final class MainActivity extends AppCompatActivity {
     refreshLibrary();
     refreshHistory();
     if (foreground) {
+      String pairedDownload = appState.takePendingDownload();
+      // Pairing consent already authorizes this session's APK download.
+      if (pairedDownload != null) queueAuthorizedDownload(pairedDownload);
       showPendingInstall(false);
       maybeHandlePendingLaunch();
     }
     String terminalKey = state.phase + "|" + state.message;
     if ("error".equals(state.phase) && !terminalKey.equals(lastTerminalState) && foreground) {
       lastTerminalState = terminalKey;
-      showMessage(
+      if (flowStatus == null) showMessage(
           "Installation stopped",
           state.message.isEmpty() ? "The installation did not finish." : state.message);
     } else if ("idle".equals(state.phase) || state.busy) {
@@ -1893,7 +2004,8 @@ public final class MainActivity extends AppCompatActivity {
 
     int visible = 0;
     String normalizedQuery = query.trim().toLowerCase(Locale.ROOT);
-    if (currentState.busy) {
+    if (currentState.busy && !"pairing".equals(currentState.phase)
+        && !"downloading".equals(currentState.phase)) {
       visible++;
       library.addView(buildActiveAppCard(history), libraryCardParams());
     }
@@ -1925,7 +2037,10 @@ public final class MainActivity extends AppCompatActivity {
       }
     }
     String status;
-    if ("downloading".equals(currentState.phase)) {
+    if ("pairing".equals(currentState.phase)) {
+      label = "Airreload pairing";
+      status = currentState.message.isEmpty() ? "Waiting for your computer…" : currentState.message;
+    } else if ("downloading".equals(currentState.phase)) {
       status = currentState.progress >= 0 ? "Downloading · " + currentState.progress + "%" : "Downloading";
     } else if ("awaiting_install".equals(currentState.phase)) {
       status = "Waiting for Android confirmation";
@@ -1951,7 +2066,7 @@ public final class MainActivity extends AppCompatActivity {
     details.addView(text(status, 13, GREEN, true));
     TextView cancel = text("×", 28, MUTED, false);
     cancel.setGravity(Gravity.CENTER);
-    cancel.setContentDescription("Cancel installation");
+    cancel.setContentDescription("pairing".equals(currentState.phase) ? "Cancel pairing" : "Cancel installation");
     cancel.setOnClickListener(view -> cancelCurrentFlow());
     cancel.setVisibility("installing".equals(currentState.phase) ? View.GONE : View.VISIBLE);
     top.addView(cancel, new LinearLayout.LayoutParams(dp(48), dp(48)));

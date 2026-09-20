@@ -8,6 +8,7 @@ import org.junit.Test;
 public final class AppUiStateTest {
   @Test
   public void activeInstallationPhasesAreBusy() {
+    assertTrue(new AppUiState("pairing", "Connecting to your computer…", -1).busy);
     assertTrue(new AppUiState("downloading", "", 10).busy);
     assertTrue(new AppUiState("installing", "", -1).busy);
     assertTrue(new AppUiState("awaiting_install", "", 100).busy);
