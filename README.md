@@ -4,7 +4,7 @@ Airreload Go pairs with the Airreload CLI through a pairing QR code or a pasted
 pairing link, then downloads and installs the session's APK. Android remains in control of every
 installation and always asks for confirmation before an app is installed.
 
-> **Beta:** The current release is `1.1.0-beta.1` (`versionCode 4`).
+> **Beta:** The current release is `1.1.0-beta.2` (`versionCode 5`).
 
 ## Requirements
 
