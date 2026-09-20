@@ -209,15 +209,15 @@ public final class MainActivity extends AppCompatActivity {
             == Configuration.UI_MODE_NIGHT_YES;
     boolean dark = THEME_DARK.equals(mode) || (THEME_SYSTEM.equals(mode) && systemDark);
     if (dark) {
-      CREAM = Color.rgb(4, 5, 6);
-      SURFACE = Color.rgb(23, 28, 34);
-      FOREST = Color.rgb(231, 234, 239);
-      GREEN = Color.rgb(112, 199, 250);
-      MINT = Color.rgb(205, 213, 223);
-      PALE_MINT = Color.rgb(18, 47, 68);
-      LIME = Color.rgb(112, 199, 250);
-      MUTED = Color.rgb(153, 161, 173);
-      BORDER = Color.rgb(61, 70, 82);
+      CREAM = Color.rgb(23, 33, 43);
+      SURFACE = Color.rgb(35, 46, 60);
+      FOREST = Color.rgb(237, 242, 246);
+      GREEN = Color.rgb(112, 185, 237);
+      MINT = Color.rgb(188, 202, 213);
+      PALE_MINT = Color.rgb(37, 58, 77);
+      LIME = Color.rgb(112, 185, 237);
+      MUTED = Color.rgb(142, 158, 172);
+      BORDER = Color.rgb(53, 68, 84);
       ERROR = Color.rgb(255, 142, 136);
       ERROR_BG = Color.rgb(48, 25, 28);
     } else {

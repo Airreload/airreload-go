@@ -1,0 +1,7 @@
+<resources>
+    <style name="AppTheme" parent="BaseAppTheme">
+        <item name="android:colorBackground">#17212B</item>
+        <item name="colorSurface">#232E3C</item>
+        <item name="colorOnSurface">#EDF2F6</item>
+    </style>
+</resources>

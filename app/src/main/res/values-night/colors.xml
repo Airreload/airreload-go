@@ -1,7 +1,7 @@
 <resources>
-    <color name="app_primary">#70C7FA</color>
+    <color name="app_primary">#70B9ED</color>
     <color name="app_on_primary">#062C43</color>
-    <color name="app_primary_container">#122F44</color>
+    <color name="app_primary_container">#253A4D</color>
     <color name="app_on_primary_container">#CDEBFF</color>
-    <color name="launcher_system_background">#040506</color>
+    <color name="launcher_system_background">#17212B</color>
 </resources>
