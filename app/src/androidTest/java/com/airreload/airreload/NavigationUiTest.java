@@ -6,6 +6,7 @@ import android.app.Instrumentation;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.res.Configuration;
+import android.graphics.Color;
 import android.graphics.Rect;
 import android.os.SystemClock;
 import android.view.View;
@@ -195,8 +196,19 @@ public final class NavigationUiTest {
         assertNotNull(find(activity.getWindow().getDecorView(), "Theme"));
         assertNotNull(find(activity.getWindow().getDecorView(), mode));
         int night = activity.getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK;
-        if (mode.equals("Dark")) assertEquals(Configuration.UI_MODE_NIGHT_YES, night);
-        if (mode.equals("Light")) assertEquals(Configuration.UI_MODE_NIGHT_NO, night);
+        if (mode.equals("Dark")) {
+          assertEquals(Configuration.UI_MODE_NIGHT_YES, night);
+          assertEquals(Color.rgb(23, 33, 43), field("CREAM"));
+          assertEquals(Color.rgb(35, 46, 60), field("SURFACE"));
+          assertEquals(Color.rgb(112, 185, 237), field("GREEN"));
+          assertEquals(Color.rgb(23, 33, 43), activity.getWindow().getStatusBarColor());
+          assertEquals(Color.rgb(23, 33, 43), activity.getWindow().getNavigationBarColor());
+        }
+        if (mode.equals("Light")) {
+          assertEquals(Configuration.UI_MODE_NIGHT_NO, night);
+          assertEquals(Color.rgb(247, 248, 251), field("CREAM"));
+          assertEquals(Color.WHITE, field("SURFACE"));
+        }
         assertNull("Theme overlay must be released", field("themeOverlay"));
       });
     }
