@@ -24,6 +24,7 @@ final class Installer {
         .edit()
         .remove("session")
         .remove("queued_url")
+        .remove("queued_from_pairing")
         .remove("package")
         .remove("package_baseline_update")
         .apply();

@@ -34,6 +34,8 @@ import org.junit.runner.RunWith;
 
 @RunWith(AndroidJUnit4.class)
 public final class NavigationUiTest {
+  private static final String PAIRING_LINK = "http://192.168.1.20:8080/pair/endpoint"
+      + "?airreload_pairing=1&token=abcdefghijklmnopqrstuvwxyzABCDEFG0123456789%3D";
   private final Instrumentation instrumentation = InstrumentationRegistry.getInstrumentation();
   private MainActivity activity;
   private String originalTheme;
@@ -206,15 +208,15 @@ public final class NavigationUiTest {
     instrumentation.runOnMainSync(() -> {
       assertNull("URL entry must remain inline", sheet());
       View decor = activity.getWindow().getDecorView();
-      assertTrue(find(decor, "Download app").isShown());
-      clickAncestor(find(decor, "Download app"));
-      assertTrue(find(decor, "Enter an app URL.").isShown());
+      assertTrue(find(decor, "Pair with computer").isShown());
+      clickAncestor(find(decor, "Pair with computer"));
+      assertTrue(find(decor, "Enter an Airreload pairing link. Direct APK links are not supported.").isShown());
       assertFalse(State.busy(activity));
     });
     click("Enter URL manually");
     settle();
     instrumentation.runOnMainSync(() -> {
-      assertFalse(find(activity.getWindow().getDecorView(), "Download app").isShown());
+      assertFalse(find(activity.getWindow().getDecorView(), "Pair with computer").isShown());
       assertNull(field("activeSheet"));
     });
   }
@@ -243,7 +245,7 @@ public final class NavigationUiTest {
     settle();
     instrumentation.runOnMainSync(() -> {
       java.util.ArrayList<View> fields = new java.util.ArrayList<>();
-      activity.getWindow().getDecorView().findViewsWithText(fields, "App download URL",
+      activity.getWindow().getDecorView().findViewsWithText(fields, "Airreload pairing URL",
           View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION);
       EditText input = (EditText) fields.get(0);
       input.requestFocus();
@@ -256,7 +258,7 @@ public final class NavigationUiTest {
       assertTrue("Keyboard must be shown for this check", insets.isVisible(WindowInsetsCompat.Type.ime()));
       Rect visible = new Rect();
       decor.getWindowVisibleDisplayFrame(visible);
-      View submit = find(decor, "Download app");
+      View submit = find(decor, "Pair with computer");
       Rect button = new Rect();
       assertTrue("Download action must be visible", submit.getGlobalVisibleRect(button));
       assertTrue("Download action must sit above the keyboard", button.bottom <= visible.bottom);
@@ -287,14 +289,14 @@ public final class NavigationUiTest {
       try {
         java.lang.reflect.Method accept = MainActivity.class.getDeclaredMethod("acceptLink", String.class);
         accept.setAccessible(true);
-        accept.invoke(activity, "https://example.org/app.apk?token=private-test-token");
+        accept.invoke(activity, PAIRING_LINK);
       } catch (ReflectiveOperationException error) { throw new AssertionError(error); }
     });
     settle();
     instrumentation.runOnMainSync(() -> {
       View decor = sheet().getWindow().getDecorView();
-      assertNotNull(find(decor, "https://example.org"));
-      assertNotNull(find(decor, "Download and review"));
+      assertNotNull(find(decor, "http://192.168.1.20:8080"));
+      assertNotNull(find(decor, "Pair and download"));
       assertFalse(State.busy(activity));
       assertNull(State.prefs(activity).getString("queued_url", null));
       sheet().cancel();
@@ -310,7 +312,7 @@ public final class NavigationUiTest {
   @Test public void inlineDraftSurvivesCollapseAndNavigationAndStillRequiresConsent() {
     click("Enter URL manually");
     settle();
-    instrumentation.runOnMainSync(() -> urlInput().setText("https://example.org/app.apk"));
+    instrumentation.runOnMainSync(() -> urlInput().setText(PAIRING_LINK));
     click("Enter URL manually");
     settle();
     click("Enter URL manually");
@@ -321,16 +323,48 @@ public final class NavigationUiTest {
     settle();
     instrumentation.runOnMainSync(() -> {
       assertTrue(urlInput().isShown());
-      assertEquals("https://example.org/app.apk", urlInput().getText().toString());
+      assertEquals(PAIRING_LINK, urlInput().getText().toString());
     });
-    click("Download app");
+    click("Pair with computer");
     settle();
     instrumentation.runOnMainSync(() -> {
       assertNotNull(sheet());
-      assertNotNull(find(sheet().getWindow().getDecorView(), "https://example.org"));
+      assertNotNull(find(sheet().getWindow().getDecorView(), "http://192.168.1.20:8080"));
       assertFalse(State.busy(activity));
       assertNull(State.prefs(activity).getString("queued_url", null));
     });
+  }
+
+  @Test public void scannerRejectsApkUrlsAndUnrelatedCodesWithoutTakingAction() {
+    for (String input : new String[] {"https://example.org/app.apk", "https://example.org", "hello"}) {
+      instrumentation.runOnMainSync(() -> {
+        try {
+          java.lang.reflect.Method accept = MainActivity.class.getDeclaredMethod("acceptLink", String.class);
+          accept.setAccessible(true);
+          accept.invoke(activity, input);
+        } catch (ReflectiveOperationException error) { throw new AssertionError(error); }
+        assertNull(sheet());
+        assertFalse(State.busy(activity));
+        assertNull(State.prefs(activity).getString("queued_url", null));
+        assertEquals("error", State.prefs(activity).getString("phase", ""));
+      });
+    }
+  }
+
+  @Test public void manualEntryRejectsApkUrlsAndUnrelatedTextWithoutTakingAction() {
+    click("Enter URL manually");
+    settle();
+    for (String input : new String[] {"https://example.org/app.apk", "https://example.org", "hello"}) {
+      instrumentation.runOnMainSync(() -> {
+        urlInput().setText(input);
+        clickAncestor(find(activity.getWindow().getDecorView(), "Pair with computer"));
+        assertNull(sheet());
+        assertFalse(State.busy(activity));
+        assertNull(State.prefs(activity).getString("queued_url", null));
+        assertTrue(find(activity.getWindow().getDecorView(),
+            "Enter an Airreload pairing link. Direct APK links are not supported.").isShown());
+      });
+    }
   }
 
   @Test public void postInstallPromptOffersAndRemembersAutoOpen() {
@@ -369,7 +403,7 @@ public final class NavigationUiTest {
 
   private EditText urlInput() {
     java.util.ArrayList<View> fields = new java.util.ArrayList<>();
-    activity.getWindow().getDecorView().findViewsWithText(fields, "App download URL",
+    activity.getWindow().getDecorView().findViewsWithText(fields, "Airreload pairing URL",
         View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION);
     return (EditText) fields.get(0);
   }

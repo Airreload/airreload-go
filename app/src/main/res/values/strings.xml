@@ -6,7 +6,7 @@
     <string name="notification_ready_body">Open Airreload Go to confirm installation with Android.</string>
     <string name="notification_preparing">Preparing download…</string>
     <string name="notification_preparing_install">Preparing installation…</string>
-    <string name="scanner_prompt">Center an APK QR code in the frame</string>
+    <string name="scanner_prompt">Center an Airreload pairing QR code in the frame</string>
     <string name="history_select_all">SELECT ALL</string>
     <string name="history_clear_selection">CLEAR</string>
     <string name="history_done">DONE</string>
