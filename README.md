@@ -83,3 +83,12 @@ Only install APKs from developers and sources you trust.
   future platform clients.
 
 The Android application ID is `com.airreload.app`.
+
+## License
+
+Except where otherwise noted, Airreload Go is dual-licensed under the
+[Apache License, Version 2.0](LICENSE-APACHE) or the [MIT license](LICENSE-MIT),
+at your option (`Apache-2.0 OR MIT`).
+
+See [COPYRIGHT](COPYRIGHT) for the copyright notice. Third-party components
+retain their respective licenses and copyright notices.
