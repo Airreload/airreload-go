@@ -9,6 +9,8 @@ import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashSet;
+import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
@@ -16,7 +18,25 @@ import org.json.JSONObject;
 public final class PairingClient {
   private static final int MAX_RESPONSE_CHARS = 16 * 1024;
   private static final long POLL_MILLIS = 1_000L;
-  private static final long MAX_WAIT_MILLIS = 10 * 60 * 1_000L;
+  private static final long MAX_UNREACHABLE_MILLIS = 60_000L;
+
+  interface Transport {
+    JSONObject request(String method, String body) throws Exception;
+  }
+
+  interface Clock {
+    long millis();
+  }
+
+  interface Sleeper {
+    void sleep(long millis) throws InterruptedException;
+  }
+
+  static final class PairingException extends IOException {
+    PairingException(String message) {
+      super(message);
+    }
+  }
 
   public interface Callback {
     void building(String message);
@@ -38,36 +58,12 @@ public final class PairingClient {
                   if (abi != null && !abi.isEmpty()) abis.put(abi);
                 }
                 report.put("abis", abis);
-                JSONObject state = request(pairing, "POST", report.toString());
-                long deadline = System.currentTimeMillis() + MAX_WAIT_MILLIS;
-                while (true) {
-                  if (Thread.currentThread().isInterrupted()) return;
-                  String phase = state.optString("state");
-                  String message = state.optString("message", "Waiting for Airreload on your computer.");
-                  if ("ready".equals(phase)) {
-                    String url = state.optString("downloadUrl");
-                    if (url.isEmpty()) throw new IOException("Airreload sent an incomplete download instruction.");
-                    ApkUrl.parse(url);
-                    callback.ready(url);
-                    return;
-                  }
-                  if ("error".equals(phase)) {
-                    callback.failed(message);
-                    return;
-                  }
-                  if (!"building".equals(phase)) {
-                    throw new IOException("The computer sent an unsupported pairing response. Restart Airreload and scan the new QR code.");
-                  }
-                  callback.building(message);
-                  if (System.currentTimeMillis() >= deadline) {
-                    callback.failed("Airreload did not finish building within 10 minutes. Scan a new pairing code to try again.");
-                    return;
-                  }
-                  Thread.sleep(POLL_MILLIS);
-                  state = request(pairing, "GET", null);
-                }
-              } catch (InterruptedException exception) {
-                Thread.currentThread().interrupt();
+                // Keep this ID for all attempts, including when the PC accepted
+                // the POST but its response was lost on Wi-Fi.
+                report.put("requestId", UUID.randomUUID().toString());
+                runSession(report.toString(), callback,
+                    (method, body) -> request(pairing, method, body),
+                    () -> TimeUnit.NANOSECONDS.toMillis(System.nanoTime()), Thread::sleep);
               } catch (Exception exception) {
                 if (Thread.currentThread().isInterrupted()) return;
                 callback.failed(
@@ -81,11 +77,72 @@ public final class PairingClient {
     return worker;
   }
 
+  static void runSession(String report, Callback callback, Transport transport,
+      Clock clock, Sleeper sleeper) {
+    boolean paired = false;
+    Long unreachableSince = null;
+    try {
+      while (!Thread.currentThread().isInterrupted()) {
+        long attemptStarted = clock.millis();
+        JSONObject state;
+        try {
+          state = transport.request(paired ? "GET" : "POST", paired ? null : report);
+          unreachableSince = null;
+        } catch (PairingException terminal) {
+          throw terminal;
+        } catch (IOException unavailable) {
+          if (Thread.currentThread().isInterrupted()) return;
+          if (unreachableSince == null) unreachableSince = attemptStarted;
+          if (clock.millis() - unreachableSince >= MAX_UNREACHABLE_MILLIS) {
+            callback.failed("Cannot reach Airreload on your computer. Keep the computer awake "
+                + "and both devices on the same Wi-Fi. If the session stopped, run Airreload "
+                + "again and scan the new QR code.");
+            return;
+          }
+          callback.building("Connection interrupted. Retrying… Keep Airreload running "
+              + "and your computer awake.");
+          sleeper.sleep(POLL_MILLIS);
+          continue;
+        }
+        if (Thread.currentThread().isInterrupted()) return;
+        String phase = state.optString("state");
+        String message = state.optString("message", "Waiting for Airreload on your computer.");
+        if ("ready".equals(phase)) {
+          String url = state.optString("downloadUrl");
+          if (url.isEmpty()) throw new PairingException("Airreload sent an incomplete download instruction.");
+          ApkUrl.parse(url);
+          callback.ready(url);
+          return;
+        }
+        if ("error".equals(phase)) {
+          callback.failed(message);
+          return;
+        }
+        if (!"building".equals(phase)) {
+          throw new PairingException("The computer sent an unsupported pairing response. "
+              + "Restart Airreload and scan the new QR code.");
+        }
+        paired = true;
+        callback.building(message);
+        // A reachable build can take longer than ten minutes on a first run.
+        // Only a sustained loss of contact ends the wait; Cancel still works.
+        sleeper.sleep(POLL_MILLIS);
+      }
+    } catch (InterruptedException cancelled) {
+      Thread.currentThread().interrupt();
+    } catch (Exception failure) {
+      if (Thread.currentThread().isInterrupted()) return;
+      callback.failed(failure.getMessage() == null
+          ? "Pairing stopped. Restart Airreload and scan the new QR code."
+          : failure.getMessage());
+    }
+  }
+
   private static JSONObject request(PairingUrl pairing, String method, String body) throws Exception {
     HttpURLConnection connection = (HttpURLConnection) pairing.uri().toURL().openConnection();
     try {
-      connection.setConnectTimeout(20_000);
-      connection.setReadTimeout(30_000);
+      connection.setConnectTimeout(5_000);
+      connection.setReadTimeout(10_000);
       connection.setInstanceFollowRedirects(false);
       connection.setRequestMethod(method);
       connection.setRequestProperty("Accept", "application/json");
@@ -101,14 +158,19 @@ public final class PairingClient {
       }
       int status = connection.getResponseCode();
       if (status == 404 || status == 410) {
-        throw new IOException("This pairing code is no longer available. Restart Airreload on your computer and scan the new QR code.");
+        throw new PairingException("This pairing code is no longer available. Restart Airreload on your computer and scan the new QR code.");
       }
       String response = read(status >= 200 && status < 300 ? connection.getInputStream() : connection.getErrorStream());
-      JSONObject json = new JSONObject(response);
       if (status < 200 || status >= 300) {
-        throw new IOException(json.optString("message", "The pairing server returned HTTP " + status + "."));
+        String message = "The pairing server returned HTTP " + status + ". Restart Airreload and scan the new QR code.";
+        try {
+          message = new JSONObject(response).optString("message", message);
+        } catch (org.json.JSONException ignored) {
+          // A proxy or a different service can return a non-JSON error page.
+        }
+        throw new PairingException(message);
       }
-      return json;
+      return new JSONObject(response);
     } finally {
       connection.disconnect();
     }
@@ -123,7 +185,7 @@ public final class PairingClient {
       while ((count = reader.read(buffer)) != -1) {
         result.append(buffer, 0, count);
         if (result.length() > MAX_RESPONSE_CHARS) {
-          throw new IOException("The pairing server sent an oversized response.");
+          throw new PairingException("The pairing server sent an oversized response.");
         }
       }
     }
