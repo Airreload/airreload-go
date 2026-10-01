@@ -1,5 +1,6 @@
 package com.airreload.airreload;
 
+import android.content.Context;
 import android.os.Build;
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -9,7 +10,6 @@ import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashSet;
-import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -33,8 +33,15 @@ public final class PairingClient {
   }
 
   static final class PairingException extends IOException {
+    final boolean sessionEnded;
+
     PairingException(String message) {
+      this(message, false);
+    }
+
+    PairingException(String message, boolean sessionEnded) {
       super(message);
+      this.sessionEnded = sessionEnded;
     }
   }
 
@@ -48,21 +55,28 @@ public final class PairingClient {
 
   private PairingClient() {}
 
-  public static Thread pair(PairingUrl pairing, Callback callback) {
+  public static Thread pair(Context context, PairingUrl pairing, Callback callback) {
     Thread worker = new Thread(
             () -> {
               try {
+                if (Thread.currentThread().isInterrupted()) return;
                 JSONObject report = new JSONObject();
                 JSONArray abis = new JSONArray();
                 for (String abi : new LinkedHashSet<String>(java.util.Arrays.asList(Build.SUPPORTED_ABIS))) {
                   if (abi != null && !abi.isEmpty()) abis.put(abi);
                 }
                 report.put("abis", abis);
-                // Keep this ID for all attempts, including when the PC accepted
-                // the POST but its response was lost on Wi-Fi.
-                report.put("requestId", UUID.randomUUID().toString());
+                // Reuse the identity across automatic retries, rescans, and app restarts.
+                report.put("requestId", PairingIdentity.requestId(context, pairing));
                 runSession(report.toString(), callback,
-                    (method, body) -> request(pairing, method, body),
+                    (method, body) -> {
+                      try {
+                        return request(pairing, method, body);
+                      } catch (PairingException failure) {
+                        if (failure.sessionEnded) PairingIdentity.forgetSession(context, pairing);
+                        throw failure;
+                      }
+                    },
                     () -> TimeUnit.NANOSECONDS.toMillis(System.nanoTime()), Thread::sleep);
               } catch (Exception exception) {
                 if (Thread.currentThread().isInterrupted()) return;
@@ -95,8 +109,8 @@ public final class PairingClient {
           if (unreachableSince == null) unreachableSince = attemptStarted;
           if (clock.millis() - unreachableSince >= MAX_UNREACHABLE_MILLIS) {
             callback.failed("Cannot reach Airreload on your computer. Keep the computer awake "
-                + "and both devices on the same Wi-Fi. If the session stopped, run Airreload "
-                + "again and scan the new QR code.");
+                + "and both devices on the same Wi-Fi, then tap Reconnect to computer. "
+                + "If the session stopped, run Airreload again and scan the new QR code.");
             return;
           }
           callback.building("Connection interrupted. Retrying… Keep Airreload running "
@@ -158,7 +172,7 @@ public final class PairingClient {
       }
       int status = connection.getResponseCode();
       if (status == 404 || status == 410) {
-        throw new PairingException("This pairing code is no longer available. Restart Airreload on your computer and scan the new QR code.");
+        throw new PairingException("This pairing session has ended. Run Airreload on your computer and scan the new QR code.", true);
       }
       String response = read(status >= 200 && status < 300 ? connection.getInputStream() : connection.getErrorStream());
       if (status < 200 || status >= 300) {
