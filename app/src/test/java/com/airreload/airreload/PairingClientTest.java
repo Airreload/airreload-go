@@ -19,7 +19,7 @@ public class PairingClientTest {
     Thread.interrupted();
   }
 
-  @Test public void keepsWaitingForAHealthyBuildBeyondTenMinutes() {
+  @Test public void keepsWaitingForAHealthyBuildBeyondAnHour() {
     int[] calls = {0};
     run((method, body) -> {
       calls[0]++;
@@ -30,9 +30,9 @@ public class PairingClientTest {
         assertEquals("GET", method);
         assertNull(body);
       }
-      return state(calls[0] <= 700 ? "building" : "ready");
+      return state(calls[0] <= 3700 ? "building" : "ready");
     });
-    assertEquals(700_000L, now);
+    assertEquals(3_700_000L, now);
     assertEquals("http://192.0.2.1/app.apk", events.ready);
     assertNull(events.error);
   }
@@ -64,6 +64,48 @@ public class PairingClientTest {
     assertEquals(5, calls[0]);
     assertNotNull(events.ready);
     assertNull(events.error);
+  }
+
+  @Test public void rescanningAfterALongBuildAndAppRestartResumesTheClaim() throws Exception {
+    PairingIdentityTest.MemoryStore store = new PairingIdentityTest.MemoryStore();
+    PairingUrl pairing = PairingUrl.parse(PairingIdentityTest.URL);
+    String firstId = PairingIdentity.requestId(store, pairing);
+    String firstReport = new JSONObject(REPORT).put("requestId", firstId).toString();
+    String[] acceptedId = {null};
+    boolean[] built = {false};
+    PairingClient.Transport server = (method, body) -> {
+      if ("POST".equals(method)) {
+        String id = new JSONObject(body).getString("requestId");
+        if (acceptedId[0] == null) acceptedId[0] = id;
+        if (!acceptedId[0].equals(id)) {
+          throw new PairingClient.PairingException("This pairing code has already been used.");
+        }
+      }
+      return state(built[0] ? "ready" : "building");
+    };
+    PairingClient.runSession(firstReport, events, server, () -> now, millis -> {
+      now += millis;
+      if (now > 700_000) throw new InterruptedException();
+    });
+    assertNull(events.error);
+    assertNull(events.ready);
+    Thread.interrupted();
+
+    PairingIdentityTest.MemoryStore reopened = new PairingIdentityTest.MemoryStore();
+    reopened.secret = store.secret;
+    String resumedReport = new JSONObject(REPORT)
+        .put("requestId", PairingIdentity.requestId(reopened, pairing)).toString();
+    built[0] = true;
+    PairingClient.runSession(resumedReport, events, server, () -> now, millis -> now += millis);
+    assertEquals("http://192.0.2.1/app.apk", events.ready);
+    assertNull(events.error);
+
+    Events otherPhone = new Events();
+    String otherReport = new JSONObject(REPORT).put("requestId",
+        PairingIdentity.requestId(new PairingIdentityTest.MemoryStore(), pairing)).toString();
+    PairingClient.runSession(otherReport, otherPhone, server, () -> now, millis -> now += millis);
+    assertNull(otherPhone.ready);
+    assertEquals("This pairing code has already been used.", otherPhone.error);
   }
 
   @Test public void explainsRecoveryAfterAContinuousMinuteOffline() {

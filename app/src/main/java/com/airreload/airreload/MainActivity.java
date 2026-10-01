@@ -126,6 +126,9 @@ public final class MainActivity extends AppCompatActivity {
   private boolean historySelectionMode;
   private EditText search;
   private Button scanButton;
+  private LinearLayout reconnectSection;
+  private Button reconnectButton;
+  private TextView reconnectSource;
   private Button urlSubmit;
   private LinearLayout flowStatus;
   private ProgressBar flowSpinner;
@@ -513,6 +516,9 @@ public final class MainActivity extends AppCompatActivity {
     library = null;
     search = null;
     scanButton = null;
+    reconnectSection = null;
+    reconnectButton = null;
+    reconnectSource = null;
     urlSubmit = null;
     flowStatus = null;
     clearHistoryCardBindings();
@@ -706,7 +712,31 @@ public final class MainActivity extends AppCompatActivity {
     scanButton = actionButton("Scan pairing QR code", R.drawable.ic_qr_code);
     scanButton.setOnClickListener(view -> requestCameraAndScan());
     card.addView(scanButton, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(60)));
+    reconnectSection = column();
+    reconnectSection.addView(divider());
+    reconnectButton = actionButton("Reconnect to computer", R.drawable.ic_link);
+    reconnectButton.setOnClickListener(view -> {
+      if (!ready()) return;
+      PairingUrl saved = PairingIdentity.savedSession(this);
+      if (saved != null) appState.startPairing(saved);
+    });
+    reconnectSection.addView(reconnectButton, new LinearLayout.LayoutParams(-1, dp(60)));
+    reconnectSource = text("", 13, MUTED, false);
+    reconnectSource.setPadding(dp(20), 0, dp(20), dp(16));
+    reconnectSection.addView(reconnectSource);
+    card.addView(reconnectSection);
+    refreshReconnect();
     return card;
+  }
+
+  private void refreshReconnect() {
+    if (reconnectSection == null) return;
+    PairingUrl saved = PairingIdentity.savedSession(this);
+    reconnectSection.setVisibility(saved == null ? View.GONE : View.VISIBLE);
+    if (saved == null) return;
+    reconnectSource.setText(saved.source() + "\nReturn to the same Wi-Fi to continue this session.");
+    reconnectButton.setEnabled(!currentState.busy);
+    reconnectButton.setAlpha(currentState.busy ? .48f : 1f);
   }
 
   private void updateUrlDisclosure(Button manual) {
@@ -1771,7 +1801,7 @@ public final class MainActivity extends AppCompatActivity {
     content.addView(space(12));
     content.addView(
         text(
-            "Pair with this Airreload computer? It will build an APK for your phone, and Airreload Go will automatically download it when ready. Android will still ask you to approve installation.",
+            "Connect to this Airreload computer? It will build an APK for your phone, or resume your existing build. Airreload Go will download it when ready. Android will still ask you to approve installation.",
             15,
             MUTED,
             false));
@@ -1924,6 +1954,7 @@ public final class MainActivity extends AppCompatActivity {
     }
     currentState = state;
     refreshFlowStatus();
+    refreshReconnect();
     if (scanButton != null) {
       scanButton.setEnabled(!state.busy);
       scanButton.setAlpha(state.busy ? .48f : 1f);

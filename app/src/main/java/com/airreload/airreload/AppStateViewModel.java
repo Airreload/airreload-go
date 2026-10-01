@@ -63,7 +63,9 @@ public final class AppStateViewModel extends AndroidViewModel {
         application, packageChanges, packages, ContextCompat.RECEIVER_EXPORTED);
     if ("pairing".equals(State.prefs(application).getString("phase", ""))) {
       State.update(application, "error",
-          "Pairing was interrupted. Restart Airreload on your computer and scan the new code.", 0);
+          PairingIdentity.savedSession(application) != null
+              ? "Connection paused. Return to the same Wi-Fi and tap Reconnect to computer. Keep Airreload running on your computer."
+              : "Pairing was interrupted. Scan the QR code on your computer to reconnect.", 0);
     }
     refreshNow();
   }
@@ -72,9 +74,10 @@ public final class AppStateViewModel extends AndroidViewModel {
     cancelPairing();
     final int generation = pairingGeneration;
     State.prefs(getApplication()).edit()
-        .remove("package").remove("package_baseline_update").apply();
+        .remove("package").remove("package_baseline_update")
+        .remove("queued_url").remove("queued_from_pairing").apply();
     State.update(getApplication(), "pairing", "Connecting to " + pairing.source() + "…", -1);
-    pairingWorker = PairingClient.pair(pairing, new PairingClient.Callback() {
+    pairingWorker = PairingClient.pair(getApplication(), pairing, new PairingClient.Callback() {
       @Override public void building(String message) {
         handler.post(() -> {
           if (generation != pairingGeneration) return;

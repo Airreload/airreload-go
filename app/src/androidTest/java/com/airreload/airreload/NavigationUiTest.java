@@ -46,6 +46,7 @@ public final class NavigationUiTest {
   private Set<String> originalHistory;
   private boolean hadLegacyImported;
   private boolean originalLegacyImported;
+  private String originalPairingUrl;
 
   @Before public void launch() {
     SharedPreferences preferences = State.prefs(instrumentation.getTargetContext());
@@ -57,6 +58,10 @@ public final class NavigationUiTest {
         new HashSet<>(preferences.getStringSet("download_history_v1", new HashSet<>()));
     hadLegacyImported = preferences.contains("download_history_legacy_imported");
     originalLegacyImported = preferences.getBoolean("download_history_legacy_imported", false);
+    SharedPreferences pairingPreferences = instrumentation.getTargetContext()
+        .getSharedPreferences("airreload_pairing", android.content.Context.MODE_PRIVATE);
+    originalPairingUrl = pairingPreferences.getString("session_url", null);
+    pairingPreferences.edit().remove("session_url").commit();
     Intent intent = new Intent(instrumentation.getTargetContext(), MainActivity.class)
         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
     activity = (MainActivity) instrumentation.startActivitySync(intent);
@@ -86,6 +91,40 @@ public final class NavigationUiTest {
       editor.remove("download_history_legacy_imported");
     }
     editor.commit();
+    instrumentation.getTargetContext()
+        .getSharedPreferences("airreload_pairing", android.content.Context.MODE_PRIVATE)
+        .edit().putString("session_url", originalPairingUrl).commit();
+  }
+
+  @Test public void interruptedPairingCanReconnectAfterActivityRestartWithoutScanning() {
+    String localSession = PAIRING_LINK.replace("192.168.1.20:8080", "127.0.0.1:1");
+    instrumentation.getTargetContext()
+        .getSharedPreferences("airreload_pairing", android.content.Context.MODE_PRIVATE)
+        .edit().putString("session_url", localSession).commit();
+    instrumentation.runOnMainSync(() -> {
+      State.update(activity, "pairing", "Building on your computer", -1);
+      activity.finish();
+    });
+    settle();
+    activity = (MainActivity) instrumentation.startActivitySync(
+        new Intent(instrumentation.getTargetContext(), MainActivity.class)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK));
+    settle();
+    instrumentation.runOnMainSync(() -> {
+      View reconnect = find(activity.getWindow().getDecorView(), "Reconnect to computer");
+      assertTrue(reconnect.isShown());
+      assertTrue(reconnect.isEnabled());
+      assertTrue(State.prefs(activity).getString("message", "").contains("Connection paused"));
+      reconnect.performClick();
+      assertEquals("pairing", State.prefs(activity).getString("phase", ""));
+      assertFalse(reconnect.isEnabled());
+      invoke("cancelCurrentFlow");
+    });
+    settle();
+    instrumentation.runOnMainSync(() -> {
+      assertTrue(find(activity.getWindow().getDecorView(), "Reconnect to computer").isEnabled());
+      assertNotNull(PairingIdentity.savedSession(activity));
+    });
   }
 
   @Test public void historyIsFullScreenAndBackRestoresHome() {

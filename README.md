@@ -4,7 +4,7 @@ Airreload Go pairs with the Airreload CLI through a pairing QR code or a pasted
 pairing link, then downloads and installs the session's APK. Android remains in control of every
 installation and always asks for confirmation before an app is installed.
 
-> **Beta:** The current release is `1.1.0-beta.3` (`versionCode 6`).
+> **Beta:** The current release is `1.1.0-beta.4` (`versionCode 7`), a pairing reconnect hotfix.
 
 ## Requirements
 
@@ -48,6 +48,16 @@ a continuous loss of contact for about a minute shows recovery instructions.
 Cancel remains available while waiting. Use the updated CLI as well as Go for
 safe retries of the initial pairing request. If the CLI session has stopped,
 start it again and scan its new code.
+
+The reconnect flow remembers the most recently approved
+session. After returning to the same Wi-Fi, tap **Reconnect to computer** on
+Home, even if Go was closed or pairing was cancelled. You can also use **Show
+reconnect QR** on the computer's pairing page and rescan with the same phone.
+Go resumes waiting or downloads the finished APK without triggering another
+build. Keep the original CLI process running at the same network address;
+restarting it creates a new session. This does not reuse APKs across separate
+CLI runs or let a different phone take over the session. The phone stores its
+session credentials privately, excluded from Android backup and transfer.
 
 Pairing codes expire with the CLI session and accept one phone. Local HTTP is
 used only for this pre-build handshake, so use it only on a trusted development
