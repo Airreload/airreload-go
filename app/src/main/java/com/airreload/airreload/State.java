@@ -11,6 +11,8 @@ final class State {
   static final String CHANGED = "com.airreload.airreload.STATE_CHANGED";
   static final String AUTO_OPEN_AFTER_INSTALL = "auto_open_after_install";
   static final String PENDING_LAUNCH = "pending_launch";
+  static final String UNINSTALL_PACKAGE = "uninstall_package";
+  static final String RETRY_DOWNLOAD = "retry_download";
 
   private State() {}
 
@@ -19,11 +21,25 @@ final class State {
   }
 
   static void update(Context context, String phase, String message, int progress) {
+    update(context, phase, message, progress, "");
+  }
+
+  static void update(
+      Context context, String phase, String message, int progress, String uninstallPackage) {
+    update(context, phase, message, progress, uninstallPackage, "");
+  }
+
+  static void update(Context context, String phase, String message, int progress,
+      String uninstallPackage, String retryDownload) {
+    boolean recovery = "error".equals(phase) || "uninstalling".equals(phase)
+        || "ready_to_reinstall".equals(phase);
     prefs(context)
         .edit()
         .putString("phase", phase)
         .putString("message", message)
         .putInt("progress", progress)
+        .putString(UNINSTALL_PACKAGE, recovery ? uninstallPackage : "")
+        .putString(RETRY_DOWNLOAD, recovery ? retryDownload : "")
         .apply();
     context.sendBroadcast(new Intent(CHANGED).setPackage(context.getPackageName()));
   }

@@ -7,6 +7,7 @@ import android.content.Intent;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageInstaller;
 import android.os.Build;
+import com.airreload.shared.history.DownloadRecord;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
@@ -39,7 +40,23 @@ final class Installer {
 
   @SuppressLint("ApplySharedPref")
   static int install(Context context, File apk) throws IOException {
+    return install(context, apk, null);
+  }
+
+  static int installSaved(Context context, String downloadId) throws IOException {
+    DownloadRecord entry = DownloadHistory.find(context, downloadId);
+    File apk = entry == null ? null : DownloadHistory.artifact(context, entry);
+    if (apk == null || !apk.isFile()) {
+      throw new IOException(context.getString(R.string.reinstall_missing));
+    }
+    return install(context, apk, entry);
+  }
+
+  private static int install(Context context, File apk, DownloadRecord saved) throws IOException {
     PackageInfo info = ApkValidator.inspect(context, apk);
+    if (saved != null && !saved.getPackageName().equals(info.packageName)) {
+      throw new IOException(context.getString(R.string.reinstall_missing));
+    }
     if (context.getPackageName().equals(info.packageName)) {
       throw new IOException("Open the Airreload Go APK directly when updating Airreload Go itself.");
     }
@@ -81,8 +98,13 @@ final class Installer {
         }
         session.fsync(output);
       }
-      DownloadHistory.archiveDownloaded(
-          context, info, apk, State.prefs(context).getString("last_url", ""));
+      if (Thread.currentThread().isInterrupted()) throw new IOException("Installation cancelled.");
+      if (saved == null) {
+        DownloadHistory.archiveDownloaded(
+            context, info, apk, State.prefs(context).getString("last_url", ""));
+      } else {
+        DownloadHistory.retry(context, saved);
+      }
       State.update(context, "installing", "Handing your app to Android…", 100);
       Intent callback =
           new Intent(context, InstallResultReceiver.class)

@@ -1,5 +1,21 @@
 <resources>
     <string name="app_name">Airreload Go</string>
+    <string name="install_error_downgrade">A newer version of this app is already installed. Uninstall it and we’ll install your downloaded APK. Uninstalling removes the app’s local data.</string>
+    <string name="install_error_conflict">This app conflicts with an installed version or its signing certificate. Uninstall it and we’ll install your downloaded APK. Uninstalling removes the app’s local data.</string>
+    <string name="install_error_uninstall">Uninstall and reinstall</string>
+    <string name="install_error_uninstall_app">Uninstall and reinstall %1$s</string>
+    <string name="reinstall_waiting_title">Waiting for uninstall…</string>
+    <string name="reinstall_waiting">Confirm uninstall in Android. We’ll automatically install your saved APK once the app is removed.</string>
+    <string name="reinstall_preparing">Installing your saved APK…</string>
+    <string name="reinstall_cancelled">Uninstall cancelled. Your app is still installed. You can try again below.</string>
+    <string name="reinstall_missing">The saved APK is no longer available. Reconnect to your computer or scan the pairing code to download it again.</string>
+    <string name="reinstall_permission">Allow Airreload Go to install apps in Android Settings before uninstalling this app.</string>
+    <string name="install_waiting_title">Confirm installation</string>
+    <string name="install_progress_title">Installing…</string>
+    <string name="install_cancel_action">Cancel installation</string>
+    <string name="reinstall_cancel_action">Cancel reinstall</string>
+    <string name="uninstall_unavailable_title">Couldn’t open uninstall</string>
+    <string name="uninstall_unavailable_body">Open this app’s info page in Android Settings to uninstall it, then try installing again.</string>
     <string name="notification_downloads">App downloads</string>
     <string name="notification_ready">Ready to install</string>
     <string name="notification_ready_title">Your app is ready</string>

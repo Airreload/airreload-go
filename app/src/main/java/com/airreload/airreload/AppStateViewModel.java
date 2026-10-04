@@ -14,6 +14,9 @@ import androidx.core.content.ContextCompat;
 import androidx.lifecycle.AndroidViewModel;
 import androidx.lifecycle.LiveData;
 import androidx.lifecycle.MutableLiveData;
+import com.airreload.shared.history.DownloadOutcomes;
+import com.airreload.shared.history.DownloadRecord;
+import java.util.List;
 
 /** Owns observable app state and reconciles active installs with Android once per second. */
 public final class AppStateViewModel extends AndroidViewModel {
@@ -67,7 +70,32 @@ public final class AppStateViewModel extends AndroidViewModel {
               ? "Connection paused. Return to the same Wi-Fi and tap Reconnect to computer. Keep Airreload running on your computer."
               : "Pairing was interrupted. Scan the QR code on your computer to reconnect.", 0);
     }
+    restoreLegacyConflictRecovery();
     refreshNow();
+  }
+
+  private void restoreLegacyConflictRecovery() {
+    Context context = getApplication();
+    // Older releases saved this message but discarded the failed install's package and record ID.
+    if (!"error".equals(State.prefs(context).getString("phase", ""))
+        || !"This app conflicts with an installed version or its signing certificate."
+            .equals(State.prefs(context).getString("message", ""))
+        || !State.prefs(context).getString(State.UNINSTALL_PACKAGE, "").isEmpty()
+        || !State.prefs(context).getString(State.RETRY_DOWNLOAD, "").isEmpty()) return;
+    List<DownloadRecord> history = DownloadHistory.all(context);
+    if (history.isEmpty()) return;
+    // Only the latest download can belong to the last failure; never search older failed apps.
+    DownloadRecord latest = history.get(0);
+    if (!DownloadOutcomes.FAILED.equals(latest.getOutcome())
+        || !DownloadHistory.hasArtifact(context, latest)
+        || context.getPackageName().equals(latest.getPackageName())) return;
+    try {
+      context.getPackageManager().getPackageInfo(latest.getPackageName(), 0);
+      State.update(context, "error", context.getString(R.string.install_error_conflict), 0,
+          latest.getPackageName(), latest.getId());
+    } catch (PackageManager.NameNotFoundException ignored) {
+      // No installed app is available to uninstall.
+    }
   }
 
   void startPairing(PairingUrl pairing) {
@@ -125,15 +153,30 @@ public final class AppStateViewModel extends AndroidViewModel {
 
   void refreshNow() {
     Context context = getApplication();
+    reconcileUninstall();
     AppUiState current =
         new AppUiState(
             State.prefs(context).getString("phase", "idle"),
             State.prefs(context).getString("message", ""),
-            State.prefs(context).getInt("progress", -1));
+            State.prefs(context).getInt("progress", -1),
+            State.prefs(context).getString(State.UNINSTALL_PACKAGE, ""));
     state.setValue(current);
     handler.removeCallbacks(poll);
     if (current.busy) {
       handler.postDelayed(poll, POLL_INTERVAL_MS);
+    }
+  }
+
+  private void reconcileUninstall() {
+    Context context = getApplication();
+    if (!"uninstalling".equals(State.prefs(context).getString("phase", ""))) return;
+    String packageName = State.prefs(context).getString(State.UNINSTALL_PACKAGE, "");
+    if (packageName.isEmpty()) return;
+    try {
+      context.getPackageManager().getPackageInfo(packageName, 0);
+    } catch (PackageManager.NameNotFoundException removed) {
+      State.update(context, "ready_to_reinstall", context.getString(R.string.reinstall_preparing), -1,
+          packageName, State.prefs(context).getString(State.RETRY_DOWNLOAD, ""));
     }
   }
 

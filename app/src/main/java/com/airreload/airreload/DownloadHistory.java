@@ -73,6 +73,23 @@ final class DownloadHistory {
     updateCurrent(context, packageName, DownloadOutcomes.INSTALLED);
   }
 
+  static String currentId(Context context) {
+    return State.prefs(context).getString(CURRENT, "");
+  }
+
+  static DownloadRecord find(Context context, String id) {
+    for (DownloadRecord entry : readStored(context)) {
+      if (entry.getId().equals(id)) return entry;
+    }
+    return null;
+  }
+
+  static void retry(Context context, DownloadRecord entry) {
+    State.prefs(context).edit().putString(CURRENT, entry.getId()).apply();
+    updateCurrent(context, entry.getPackageName(), DownloadOutcomes.DOWNLOADED);
+    State.prefs(context).edit().putString(CURRENT, entry.getId()).apply();
+  }
+
   static void markCancelled(Context context) {
     updateCurrent(context, null, DownloadOutcomes.CANCELLED);
   }
@@ -105,7 +122,9 @@ final class DownloadHistory {
     List<DownloadRecord> remaining = new ArrayList<>();
     int deleted = 0;
     for (DownloadRecord entry : entries) {
-      if (!ids.contains(entry.getId())) {
+      boolean active = State.busy(context) && (entry.getId().equals(currentId(context))
+          || entry.getId().equals(State.prefs(context).getString(State.RETRY_DOWNLOAD, "")));
+      if (!ids.contains(entry.getId()) || active) {
         remaining.add(entry);
         continue;
       }
@@ -118,7 +137,7 @@ final class DownloadHistory {
     }
     write(context, remaining);
     String current = State.prefs(context).getString(CURRENT, "");
-    if (ids.contains(current)) {
+    if (find(context, current) == null) {
       State.prefs(context).edit().remove(CURRENT).apply();
     }
     notifyChanged(context);
@@ -253,7 +272,7 @@ final class DownloadHistory {
     return new File(context.getFilesDir(), DIRECTORY);
   }
 
-  private static File artifact(Context context, DownloadRecord entry) {
+  static File artifact(Context context, DownloadRecord entry) {
     if (!entry.getArtifactName().matches("[a-f0-9-]+\\.apk")) {
       return null;
     }
