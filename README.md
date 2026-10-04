@@ -4,7 +4,7 @@ Airreload Go pairs with the Airreload CLI through a pairing QR code or a pasted
 pairing link, then downloads and installs the session's APK. Android remains in control of every
 installation and always asks for confirmation before an app is installed.
 
-> **Beta:** The current release is `1.1.0-beta.4` (`versionCode 7`), a pairing reconnect hotfix.
+> **Beta:** The current release is `1.1.0-beta.5` (`versionCode 8`), an installation recovery hotfix.
 
 ## Requirements
 
@@ -29,6 +29,13 @@ changed later under **Settings → After installation**.
 
 Installed apps appear in the **Apps** list. Validated downloads remain in
 **History** until you delete them.
+
+If Android rejects an APK because a newer version or a conflicting signing
+certificate is already installed, tap **Uninstall and reinstall**. Android asks
+you to confirm removal; uninstalling removes that app's local data. Go then
+installs the saved APK with Android's usual installation confirmation, without
+another download or build. Cancelling uninstall keeps the installed app in
+place. If the saved APK has been deleted, reconnect to download it again.
 
 ### Pairing with Airreload CLI
 

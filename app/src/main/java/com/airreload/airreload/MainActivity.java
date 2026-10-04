@@ -136,6 +136,7 @@ public final class MainActivity extends AppCompatActivity {
   private TextView flowTitle;
   private TextView flowDetail;
   private TextView flowAction;
+  private Button flowUninstall;
   private boolean urlExpanded;
   private String urlDraft = "";
   private AppStateViewModel appState;
@@ -149,6 +150,7 @@ public final class MainActivity extends AppCompatActivity {
   private ActivityResultLauncher<ScanOptions> scanner;
   private ActivityResultLauncher<String> cameraPermission;
   private ActivityResultLauncher<Intent> sourceSettings;
+  private ActivityResultLauncher<Intent> uninstallConfirmation;
   private ActivityResultLauncher<String> notificationPermission;
 
   @Override
@@ -331,6 +333,16 @@ public final class MainActivity extends AppCompatActivity {
   }
 
   private void configureLaunchers() {
+    uninstallConfirmation = registerForActivityResult(
+        new ActivityResultContracts.StartActivityForResult(), result -> {
+          if (!"uninstalling".equals(State.prefs(this).getString("phase", ""))) return;
+          String packageName = State.prefs(this).getString(State.UNINSTALL_PACKAGE, "");
+          if (result.getResultCode() != RESULT_OK && isPackageInstalled(packageName)) {
+            State.update(this, "error", getString(R.string.reinstall_cancelled), 0,
+                packageName, State.prefs(this).getString(State.RETRY_DOWNLOAD, ""));
+          }
+          refreshStatus();
+        });
     scanner =
         registerForActivityResult(
             new ScanContract(),
@@ -415,7 +427,9 @@ public final class MainActivity extends AppCompatActivity {
 
   private void recoverInterruptedFlow() {
     // Pairing has no Android install session; the ViewModel owns its lifetime.
-    if ("pairing".equals(State.prefs(this).getString("phase", ""))) return;
+    String phase = State.prefs(this).getString("phase", "");
+    if ("pairing".equals(phase) || "uninstalling".equals(phase)
+        || "ready_to_reinstall".equals(phase)) return;
     if (!State.busy(this)) {
       return;
     }
@@ -635,6 +649,15 @@ public final class MainActivity extends AppCompatActivity {
     flowDetail = text("", 12, MUTED, false);
     copy.addView(flowTitle);
     copy.addView(flowDetail);
+    flowUninstall = button(getString(R.string.install_error_uninstall), Color.TRANSPARENT, GREEN);
+    flowUninstall.setTextSize(13);
+    flowUninstall.setPaintFlags(flowUninstall.getPaintFlags() | Paint.UNDERLINE_TEXT_FLAG);
+    flowUninstall.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
+    flowUninstall.setPadding(0, 0, dp(12), 0);
+    flowUninstall.setVisibility(View.GONE);
+    flowUninstall.setOnClickListener(view -> uninstallFailedApp());
+    flowUninstall.setMinHeight(dp(48));
+    copy.addView(flowUninstall, new LinearLayout.LayoutParams(-2, -2));
     line.addView(copy, new LinearLayout.LayoutParams(0, -2, 1));
     flowAction = text("×", 24, MUTED, false);
     flowAction.setGravity(Gravity.CENTER);
@@ -663,10 +686,17 @@ public final class MainActivity extends AppCompatActivity {
     if (flowStatus == null) return;
     boolean pairing = "pairing".equals(currentState.phase);
     boolean downloading = "downloading".equals(currentState.phase);
+    boolean uninstalling = "uninstalling".equals(currentState.phase);
+    boolean installing = "installing".equals(currentState.phase)
+        || "ready_to_reinstall".equals(currentState.phase);
+    boolean awaitingInstall = "awaiting_install".equals(currentState.phase);
     boolean error = "error".equals(currentState.phase);
-    flowStatus.setVisibility(pairing || downloading || error ? View.VISIBLE : View.GONE);
-    if (!pairing && !downloading && !error) return;
+    flowStatus.setVisibility(currentState.busy || error ? View.VISIBLE : View.GONE);
+    if (!currentState.busy && !error) return;
     String title = error ? "Something went wrong"
+        : uninstalling ? getString(R.string.reinstall_waiting_title)
+        : installing ? getString(R.string.install_progress_title)
+        : awaitingInstall ? getString(R.string.install_waiting_title)
         : pairing ? "Pairing…"
         : currentState.progress >= 0 ? "Downloading · " + currentState.progress + "%" : "Downloading…";
     if (!title.contentEquals(flowTitle.getText())) flowTitle.setText(title);
@@ -680,7 +710,86 @@ public final class MainActivity extends AppCompatActivity {
     flowProgress.setVisibility(downloading ? View.VISIBLE : View.GONE);
     flowProgress.setIndeterminate(currentState.progress < 0);
     flowProgress.setProgress(Math.max(0, currentState.progress));
-    flowAction.setContentDescription(error ? "Dismiss error" : pairing ? "Cancel pairing" : "Cancel download");
+    flowAction.setContentDescription(error ? "Dismiss error" : pairing ? "Cancel pairing"
+        : uninstalling ? getString(R.string.reinstall_cancel_action)
+        : downloading ? "Cancel download" : getString(R.string.install_cancel_action));
+    ApplicationInfo uninstallApp = error ? failedInstalledApp() : null;
+    flowUninstall.setVisibility(uninstallApp == null ? View.GONE : View.VISIBLE);
+    if (uninstallApp != null) {
+      flowUninstall.setContentDescription(getString(R.string.install_error_uninstall_app,
+          getPackageManager().getApplicationLabel(uninstallApp)));
+    }
+  }
+
+  private ApplicationInfo failedInstalledApp() {
+    String packageName = currentState.uninstallPackage;
+    if (!"error".equals(currentState.phase) || packageName.isEmpty()
+        || getPackageName().equals(packageName)) return null;
+    try {
+      return getPackageManager().getApplicationInfo(packageName, 0);
+    } catch (PackageManager.NameNotFoundException ignored) {
+      return null;
+    }
+  }
+
+  private void uninstallFailedApp() {
+    ApplicationInfo app = failedInstalledApp();
+    if (app == null) {
+      refreshStatus();
+      return;
+    }
+    String downloadId = State.prefs(this).getString(State.RETRY_DOWNLOAD, "");
+    DownloadRecord download = DownloadHistory.find(this, downloadId);
+    if (download == null || !app.packageName.equals(download.getPackageName())
+        || !DownloadHistory.hasArtifact(this, download)) {
+      State.update(this, "error", getString(R.string.reinstall_missing), 0);
+      refreshStatus();
+      return;
+    }
+    if (!getPackageManager().canRequestPackageInstalls()) {
+      showMessage(getString(R.string.install_error_uninstall), getString(R.string.reinstall_permission));
+      return;
+    }
+    State.update(this, "uninstalling", getString(R.string.reinstall_waiting), -1,
+        app.packageName, downloadId);
+    refreshStatus();
+    try {
+      uninstallConfirmation.launch(
+          new Intent(Intent.ACTION_UNINSTALL_PACKAGE, Uri.fromParts("package", app.packageName, null))
+              .putExtra(Intent.EXTRA_RETURN_RESULT, true));
+    } catch (ActivityNotFoundException | SecurityException exception) {
+      State.update(this, "error", getString(R.string.uninstall_unavailable_body), 0,
+          app.packageName, downloadId);
+      refreshStatus();
+    }
+  }
+
+  private boolean isPackageInstalled(String packageName) {
+    try {
+      getPackageManager().getPackageInfo(packageName, 0);
+      return true;
+    } catch (PackageManager.NameNotFoundException ignored) {
+      return false;
+    }
+  }
+
+  private void reinstallSavedDownload() {
+    String downloadId = State.prefs(this).getString(State.RETRY_DOWNLOAD, "");
+    DownloadRecord download = DownloadHistory.find(this, downloadId);
+    if (download == null || !DownloadHistory.hasArtifact(this, download)) {
+      State.update(this, "error", getString(R.string.reinstall_missing), 0);
+      return;
+    }
+    // Claim the transition before starting the service so repeated updates cannot retry twice.
+    DownloadHistory.retry(this, download);
+    State.update(this, "installing", getString(R.string.reinstall_preparing), -1);
+    try {
+      ContextCompat.startForegroundService(this,
+          new Intent(this, InstallService.class).putExtra(State.RETRY_DOWNLOAD, downloadId));
+    } catch (RuntimeException exception) {
+      DownloadHistory.markFailed(this, download.getPackageName());
+      State.update(this, "error", "Couldn’t start installation. Please try again.", 0);
+    }
   }
 
   private View buildActionCard() {
@@ -1966,6 +2075,9 @@ public final class MainActivity extends AppCompatActivity {
     refreshLibrary();
     refreshHistory();
     if (foreground) {
+      if ("ready_to_reinstall".equals(State.prefs(this).getString("phase", ""))) {
+        reinstallSavedDownload();
+      }
       String pairedDownload = appState.takePendingDownload();
       // Pairing consent already authorizes this session's APK download.
       if (pairedDownload != null) queueAuthorizedDownload(pairedDownload);

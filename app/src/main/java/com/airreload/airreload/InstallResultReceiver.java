@@ -37,13 +37,18 @@ public final class InstallResultReceiver extends BroadcastReceiver {
       DownloadHistory.markInstalled(context, packageName);
       State.update(context, "success", "Installed successfully.", 100);
     } else {
+      String retryDownload = DownloadHistory.currentId(context);
       if (status == PackageInstaller.STATUS_FAILURE_ABORTED) {
         DownloadHistory.markCancelled(context);
       } else {
         DownloadHistory.markFailed(
             context, State.prefs(context).getString("package", ""));
       }
-      State.update(context, "error", failureMessage(status, intent), 0);
+      String detail = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE);
+      String packageName = State.prefs(context).getString("package", "");
+      String uninstallPackage = canResolveByUninstalling(status, detail) ? packageName : "";
+      State.update(context, "error", failureMessage(context, status, intent), 0,
+          uninstallPackage, uninstallPackage.isEmpty() ? "" : retryDownload);
     }
     Confirmation.clear(context);
     State.prefs(context)
@@ -55,15 +60,27 @@ public final class InstallResultReceiver extends BroadcastReceiver {
     context.stopService(new Intent(context, InstallService.class));
   }
 
-  private static String failureMessage(int status, Intent intent) {
+  static boolean canResolveByUninstalling(int status, String detail) {
+    return status == PackageInstaller.STATUS_FAILURE_CONFLICT
+        || ((status == PackageInstaller.STATUS_FAILURE
+            || status == PackageInstaller.STATUS_FAILURE_INVALID) && isDowngrade(detail));
+  }
+
+  private static boolean isDowngrade(String detail) {
+    return detail != null && detail.contains("INSTALL_FAILED_VERSION_DOWNGRADE");
+  }
+
+  private static String failureMessage(Context context, int status, Intent intent) {
+    String detail = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE);
+    if (canResolveByUninstalling(status, detail)) {
+      return context.getString(isDowngrade(detail)
+          ? R.string.install_error_downgrade : R.string.install_error_conflict);
+    }
     if (status == PackageInstaller.STATUS_FAILURE_ABORTED) {
       return "Installation cancelled. Nothing was added to your library.";
     }
     if (status == PackageInstaller.STATUS_FAILURE_STORAGE) {
       return "There isn’t enough device storage. Free some space and try again.";
-    }
-    if (status == PackageInstaller.STATUS_FAILURE_CONFLICT) {
-      return "This app conflicts with an installed version or its signing certificate.";
     }
     if (status == PackageInstaller.STATUS_FAILURE_INCOMPATIBLE) {
       return "This APK isn’t compatible with this Android version or device architecture.";
@@ -71,7 +88,6 @@ public final class InstallResultReceiver extends BroadcastReceiver {
     if (status == PackageInstaller.STATUS_FAILURE_BLOCKED) {
       return "Android blocked the installation. Check your app-install settings and device policy.";
     }
-    String detail = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE);
     return detail == null || detail.trim().isEmpty()
         ? "Installation didn’t finish. Scan the code and try again."
         : "Installation didn’t finish: " + detail;

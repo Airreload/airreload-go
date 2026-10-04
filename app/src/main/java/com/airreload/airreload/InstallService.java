@@ -41,10 +41,17 @@ public final class InstallService extends Service {
     }
     running = true;
     String url = intent == null ? null : intent.getStringExtra("url");
+    String savedDownload = intent == null ? null : intent.getStringExtra(State.RETRY_DOWNLOAD);
     executor.execute(
         () -> {
           File file = new File(getCacheDir(), "airreload-" + UUID.randomUUID() + ".apk");
           try {
+            if (savedDownload != null) {
+              State.update(this, "installing", getString(R.string.reinstall_preparing), -1);
+              Installer.installSaved(this, savedDownload);
+              updateNotification(getString(R.string.notification_preparing_install), -1);
+              return;
+            }
             State.update(this, "downloading", "Reaching the download server…", -1);
             final long[] lastUpdate = {0};
             ApkDownloader.download(
@@ -142,4 +149,3 @@ public final class InstallService extends Service {
     return null;
   }
 }
-
