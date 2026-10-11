@@ -31,6 +31,7 @@ final class State {
 
   static void update(Context context, String phase, String message, int progress,
       String uninstallPackage, String retryDownload) {
+    String previous = prefs(context).getString("phase", "idle");
     boolean recovery = "error".equals(phase) || "uninstalling".equals(phase)
         || "ready_to_reinstall".equals(phase);
     prefs(context)
@@ -41,7 +42,23 @@ final class State {
         .putString(UNINSTALL_PACKAGE, recovery ? uninstallPackage : "")
         .putString(RETRY_DOWNLOAD, recovery ? retryDownload : "")
         .apply();
+    Analytics.Event event = transitionEvent(previous, phase);
+    if (event != null) Telemetry.capture(context, event);
     context.sendBroadcast(new Intent(CHANGED).setPackage(context.getPackageName()));
+  }
+
+  static Analytics.Event transitionEvent(String previous, String phase) {
+    if (phase.equals(previous)) return null;
+    if ("success".equals(phase)) return Analytics.Event.INSTALL_SUCCEEDED;
+    if ("downloading".equals(previous)) {
+      if ("error".equals(phase)) return Analytics.Event.DOWNLOAD_FAILED;
+      if ("idle".equals(phase)) return Analytics.Event.DOWNLOAD_CANCELLED;
+    }
+    if ("installing".equals(previous) || "awaiting_install".equals(previous)) {
+      if ("error".equals(phase)) return Analytics.Event.INSTALL_FAILED;
+      if ("idle".equals(phase)) return Analytics.Event.INSTALL_CANCELLED;
+    }
+    return null;
   }
 
   static boolean busy(Context context) {

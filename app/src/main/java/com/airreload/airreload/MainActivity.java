@@ -157,6 +157,7 @@ public final class MainActivity extends AppCompatActivity {
   protected void onCreate(Bundle savedInstanceState) {
     applyThemePreference();
     super.onCreate(savedInstanceState);
+    if (savedInstanceState == null) Telemetry.capture(this, Analytics.Event.APP_OPENED);
     // Do not resume a direct APK URL saved by versions before pairing-only mode.
     if (!State.prefs(this).getBoolean("queued_from_pairing", false)) {
       State.prefs(this).edit().remove("queued_url").apply();
@@ -1104,6 +1105,13 @@ public final class MainActivity extends AppCompatActivity {
     afterInstallation.addView(autoOpenSettingsRow());
     root.addView(afterInstallation);
     root.addView(space(34));
+    root.addView(text("Privacy", 14, MUTED, true));
+    root.addView(space(12));
+    LinearLayout privacy = column();
+    privacy.setBackground(outline(SURFACE, BORDER, 15));
+    privacy.addView(analyticsSettingsRow());
+    root.addView(privacy);
+    root.addView(space(34));
     root.addView(text("Permissions", 14, MUTED, true));
     root.addView(space(12));
     LinearLayout permissions = column();
@@ -1659,6 +1667,33 @@ public final class MainActivity extends AppCompatActivity {
     item.setMinimumHeight(dp(64));
     item.setFocusable(listener != null);
     item.setOnClickListener(listener);
+    return item;
+  }
+
+  private View analyticsSettingsRow() {
+    LinearLayout item = row();
+    item.setGravity(Gravity.CENTER_VERTICAL);
+    item.setPadding(dp(20), dp(12), dp(14), dp(12));
+    LinearLayout labels = column();
+    labels.addView(text("Share usage analytics", 16, FOREST, false));
+    labels.addView(space(3));
+    labels.addView(text("On by default. Sends usage milestones, app/Android versions, and a random ID "
+        + "to PostHog in the US. No app names, pairing links, or logs. "
+        + "PostHog receives your connection IP. Turning off removes the local ID, not past events.",
+        13, MUTED, false));
+    LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, -2, 1);
+    params.setMarginEnd(dp(12));
+    item.addView(labels, params);
+    MaterialSwitch toggle = new MaterialSwitch(this);
+    toggle.setContentDescription("Share usage analytics");
+    toggle.setChecked(Telemetry.enabled(this));
+    toggle.setOnCheckedChangeListener((button, checked) -> {
+      if (!Telemetry.setEnabled(this, checked)) {
+        android.widget.Toast.makeText(this, "Could not save analytics preference.",
+            android.widget.Toast.LENGTH_SHORT).show();
+      }
+    });
+    item.addView(toggle, new LinearLayout.LayoutParams(dp(52), dp(48)));
     return item;
   }
 
