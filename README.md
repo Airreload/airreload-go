@@ -4,7 +4,7 @@ Airreload Go pairs with the Airreload CLI through a pairing QR code or a pasted
 pairing link, then downloads and installs the session's APK. Android remains in control of every
 installation and always asks for confirmation before an app is installed.
 
-> **Beta:** The current release is `1.1.0-beta.5` (`versionCode 8`), an installation recovery hotfix.
+> **Beta:** The current release is `1.1.0-beta.6` (`versionCode 9`), adding usage analytics with a Settings opt-out.
 
 ## Requirements
 
@@ -70,6 +70,37 @@ Pairing codes expire with the CLI session and accept one phone. Local HTTP is
 used only for this pre-build handshake, so use it only on a trusted development
 network. Both the scanner and manual entry accept pairing links only.
 
+## Usage analytics
+
+Usage analytics is **enabled by default**. Turn it off in **Settings → Privacy →
+Share usage analytics**. Turning it off deletes the local random installation ID;
+turning it back on creates a new ID on the next event. Already received events
+remain in PostHog. Preferences and the ID use app-private storage, excluded from
+Android backup along with the rest of the app's data.
+
+Go sends explicit `go_` events for app opens, pairing starts/completion/failure/
+cancellation, download starts/completion/failure/cancellation, and install
+success/failure/cancellation. Pairing completion means the CLI has returned the
+ready APK download link. Install failures include Android rejecting or cancelling
+an installation; the separate cancellation event covers cancelling in Go.
+Repeated progress updates and screen redraws do not produce events.
+
+Each event contains a timestamp, random installation ID, `surface=android`, Go
+version, and Android API level. It never includes app names/package names,
+installed-app lists, QR contents, pairing URLs/tokens, APK URLs, filenames, or raw
+errors/logs. There is no session replay, autocapture, advertising ID, or cross-device
+identity linking. Requests disable PostHog person profiles and GeoIP enrichment;
+the receiving server can still see the connection IP. Project-level IP discarding
+is a separate PostHog setting.
+
+Events go directly over HTTPS to the same US PostHog project as the CLI. Only the
+public `phc_` collection token is embedded. Sending uses one background worker,
+a 32-event memory queue, one-second connect/read timeouts, and a 200-event cap per
+app process. Events waiting more than 15 seconds are dropped. No disk queue,
+retries, or redirects are used, and failures never affect pairing/installing.
+Opt-out invalidates queued events; an already transmitted event cannot be recalled.
+Unit tests inject local stores and transports and send nothing to PostHog.
+
 ## Build from source
 
 Install JDK 17 and Android SDK 35, then run:
@@ -97,6 +128,20 @@ With an emulator or Android device connected, run the UI tests with:
 ```sh
 ./gradlew :app:connectedDebugAndroidTest
 ```
+
+The live analytics smoke test is skipped by default. On a disposable emulator,
+explicitly enable it to exercise the Settings opt-out, activity relaunch, and
+installation-ID rotation against the configured PostHog project:
+
+```sh
+./gradlew :app:connectedDebugAndroidTest \
+  -Pandroid.testInstrumentationRunnerArguments.class=com.airreload.airreload.TelemetryLiveTest \
+  -Pandroid.testInstrumentationRunnerArguments.livePosthog=true
+```
+
+This sends real `go_app_opened` events. Verify delivery in PostHog Activity and
+match the IDs printed under the `TelemetryLiveTest` logcat tag. The test leaves
+analytics enabled; do not run it on a user's installation.
 
 Only install APKs from developers and sources you trust.
 

@@ -53,6 +53,7 @@ public final class InstallService extends Service {
               return;
             }
             State.update(this, "downloading", "Reaching the download server…", -1);
+            Telemetry.capture(this, Analytics.Event.DOWNLOAD_STARTED);
             final long[] lastUpdate = {0};
             ApkDownloader.download(
                 url,
@@ -80,6 +81,7 @@ public final class InstallService extends Service {
               throw new IOException("Download cancelled.");
             }
             State.update(this, "installing", "Checking the APK and its signature…", -1);
+            Telemetry.capture(this, Analytics.Event.DOWNLOAD_COMPLETED);
             Installer.install(this, file);
             updateNotification(getString(R.string.notification_preparing_install), -1);
           } catch (Exception exception) {

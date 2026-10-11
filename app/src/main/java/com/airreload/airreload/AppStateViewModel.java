@@ -100,6 +100,7 @@ public final class AppStateViewModel extends AndroidViewModel {
 
   void startPairing(PairingUrl pairing) {
     cancelPairing();
+    Telemetry.capture(getApplication(), Analytics.Event.PAIRING_STARTED);
     final int generation = pairingGeneration;
     State.prefs(getApplication()).edit()
         .remove("package").remove("package_baseline_update")
@@ -118,6 +119,7 @@ public final class AppStateViewModel extends AndroidViewModel {
           if (generation != pairingGeneration) return;
           pairingWorker = null;
           pendingDownload = downloadUrl;
+          Telemetry.capture(getApplication(), Analytics.Event.PAIRING_COMPLETED);
           State.update(getApplication(), "idle", "Your Airreload debug APK is ready to download.", 0);
           refreshNow();
         });
@@ -128,6 +130,7 @@ public final class AppStateViewModel extends AndroidViewModel {
           if (generation != pairingGeneration) return;
           pairingWorker = null;
           State.update(getApplication(), "error", message, 0);
+          Telemetry.capture(getApplication(), Analytics.Event.PAIRING_FAILED);
         });
       }
     });
@@ -136,7 +139,10 @@ public final class AppStateViewModel extends AndroidViewModel {
 
   void cancelPairing() {
     pairingGeneration++;
-    if (pairingWorker != null) pairingWorker.interrupt();
+    if (pairingWorker != null) {
+      pairingWorker.interrupt();
+      Telemetry.capture(getApplication(), Analytics.Event.PAIRING_CANCELLED);
+    }
     pairingWorker = null;
     pendingDownload = null;
   }
